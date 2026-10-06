@@ -1,4 +1,4 @@
-﻿/*  GRBL-Plotter. Another GCode sender for GRBL.
+/*  GRBL-Plotter. Another GCode sender for GRBL.
     This file is part of the GRBL-Plotter application.
    
     Copyright (C) 2015-2026 Sven Hasemann contact: svenhb@web.de
@@ -144,6 +144,26 @@ namespace GrblPlotter
             EventCollector.Init();
 
             InitializeComponent();      // controls
+            var autoWriterMenu = new ToolStripMenuItem("AutoWriter");
+            autoWriterMenu.DropDownItems.Add("机器配置与校准", null, (sender, args) =>
+            {
+                using (var form = new AutoWriter.MachineSetupForm(LoadWritingIntoPreview)) form.ShowDialog(this);
+            });
+            menuStrip1.Items.Add(autoWriterMenu);
+            autoWriterMenu.DropDownItems.Add("读取固件与参数（检查模式）", null, (sender, args) =>
+            {
+                try { _serial_form.BeginMachineInspection(); }
+                catch (Exception error) { MessageBox.Show(this, error.Message, "AutoWriter"); }
+            });
+            autoWriterMenu.DropDownItems.Add("导出本次原始响应", null, (sender, args) =>
+            {
+                using (var dialog = new SaveFileDialog { Filter = "原始响应 (*.txt)|*.txt", FileName = "machine-inspection-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss") + ".txt" })
+                    if (dialog.ShowDialog(this) == DialogResult.OK)
+                    {
+                        try { _serial_form.SaveMachineInspection(dialog.FileName); }
+                        catch (Exception error) { MessageBox.Show(this, error.Message, "AutoWriter"); }
+                    }
+            });
             RemoveCursorNavigation(this.Controls);
 
             System.Windows.Forms.Application.ThreadException += new System.Threading.ThreadExceptionEventHandler(Application_ThreadException);
@@ -206,6 +226,8 @@ namespace GrblPlotter
             LoadExtensionList();			// FillToolListElements menu with available extension-scripts
             CmsPicBoxEnable(false);         // no graphic - no tasks
             DpiScaling = (float)DeviceDpi / 96;
+            Logger.Info("UI scale: DPI={0}, font={1}/{2}pt, client={3}, streaming={4}, streamingFont={5}pt",
+                DeviceDpi, Font.Name, Font.SizeInPoints, ClientSize, ucStreaming.Size, ucStreaming.Font.SizeInPoints);
 
             UserControlsInitialize();       // add event listeners
 
@@ -234,12 +256,13 @@ namespace GrblPlotter
             // Use load event: code that requires the window size and location to be known.
             SetGUISize();               // resize GUI arcodring last size and check if within display in MainFormUpdate.cs
 
-            if (Properties.Settings.Default.guiCheckUpdate)
+            if (!Program.OfflineMode && !Program.MachineInspectionMode && Properties.Settings.Default.guiCheckUpdate)
             {
                 StatusStripSet(2, Localization.GetString("statusStripeCheckUpdate"), Color.LightGreen);
                 CheckUpdate.CheckVersion(false, Properties.Settings.Default.guiLastEndReason);     // check Update
             }
             UserControlsMainFormLoad();     // apply visible height
+            SetupViewOrientationMenu();     // add the display-only mirror / rotate entries to the View menu
 
             mainTimerCount = 0;
             SplashScreenTimer.Enabled = true;
@@ -256,13 +279,13 @@ namespace GrblPlotter
 
                 if (_serial_form == null)
                 {
-                    if (Properties.Settings.Default.ctrlUseSerial2)
+                    if (!Program.MachineInspectionMode && Properties.Settings.Default.ctrlUseSerial2)
                     {
                         _serial_form2 = new ControlSerialForm("COM Tool changer", 2);
                         if (showFormInFront) _serial_form2.Show(this);
                         else _serial_form2.Show();
                     }
-                    if (Properties.Settings.Default.ctrlUseSerial3)
+                    if (!Program.OfflineMode && !Program.MachineInspectionMode && Properties.Settings.Default.ctrlUseSerial3)
                     {
                         _serial_form3 = new SimpleSerialForm();// "COM simple", 3);
                         if (showFormInFront) _serial_form3.Show(this);
@@ -276,7 +299,7 @@ namespace GrblPlotter
                     _serial_form.RaiseStreamEvent += OnRaiseStreamEvent;
                 }
 
-                if (Properties.Settings.Default.ctrlUseSerialDIY)
+                if (!Program.OfflineMode && !Program.MachineInspectionMode && Properties.Settings.Default.ctrlUseSerialDIY)
                 { DIYControlopen(sender, e); }
 
                 if (_splashscreen != null)
@@ -288,6 +311,13 @@ namespace GrblPlotter
                 Logger.Info(culture, "▲▲▲▲ MainForm SplashScreen closed          -> mainTimer:{0}", mainTimerCount);
 
                 string[] args = Environment.GetCommandLineArgs();
+                args = Array.FindAll(args, argument =>
+                    !string.Equals(argument, "--offline", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(argument, "--inspect-machine", StringComparison.OrdinalIgnoreCase) &&
+                    !argument.StartsWith("--inspect-once=", StringComparison.OrdinalIgnoreCase) &&
+                    !argument.StartsWith("--axis-step=", StringComparison.OrdinalIgnoreCase) &&
+                    !argument.StartsWith("--pen-step=", StringComparison.OrdinalIgnoreCase) &&
+                    !argument.StartsWith("--pen-position=", StringComparison.OrdinalIgnoreCase));
 
                 if (args.Length > 1)
                     LoadFiles(args, 1);
@@ -300,10 +330,11 @@ namespace GrblPlotter
                 Properties.Settings.Default.guiLastStart = DateTime.Now.Ticks;
                 Properties.Settings.Default.guiLastEndReason = "";
 
-                if (Properties.Settings.Default.processOpenOnProgStart)
+                if (!Program.OfflineMode && !Program.MachineInspectionMode && Properties.Settings.Default.processOpenOnProgStart)
                 { ProcessAutomationFormOpen(sender, e); }
 
                 CheckProgramFiles();
+                if (Program.InspectionOncePort != null) RunSingleMachineInspection();
             }
             else
             {

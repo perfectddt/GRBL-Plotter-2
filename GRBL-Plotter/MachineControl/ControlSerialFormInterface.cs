@@ -70,6 +70,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
+using GrblPlotter.AutoWriter;
 
 namespace GrblPlotter
 {
@@ -134,6 +135,7 @@ namespace GrblPlotter
         /***** Seperate grbl / Marlin support *****/
         private void ProcessMessages(object sender, EventArgs e)	// https://github.com/gnea/grbl/wiki/Grbl-v1.1-Interface#message-summary
         {
+            CaptureInspectionResponse(rxString);
             if (string.IsNullOrEmpty(rxString)) { isDataProcessing = false; return; }     // unlock serialPort1_DataReceived
             if (countShutdown > 0) { isDataProcessing = false; return; }
             if ((rxString[0] < 32))
@@ -625,6 +627,22 @@ namespace GrblPlotter
                     if (isStreaming) StreamingIDLE(); // streaming reached idle
                     if (countPreventIdle <= 1) waitForIdle = false;
                     countPreventInterlock = 50;
+
+                    // AutoWriter: close the loop opened by the 「解锁」 button. Pressing '$X' by hand
+                    // only unlocks the controller - the operator still had to press 「检查GRBL」 to get
+                    // the settings that candidate I-a skips while in ALARM. This fires that read on the
+                    // first IDLE report after the unlock.
+                    //
+                    // It must run here and not in BtnGRBLUnlock_Click: ProcessSend() only lets a '$'
+                    // line leave the queue in IDLE or CHECK, so issuing ReadSettings() any earlier
+                    // would re-wedge the very queue that '$X' just cleared.
+                    if (AlarmUnlock.ShouldReadSettings(pendingUnlockSettingsRead,
+                            grblStateNow == GrblState.idle, IsConnectedToGrbl()))
+                    {
+                        pendingUnlockSettingsRead = false;
+                        AddToLog(AlarmUnlock.LogSettingsRecovered);
+                        ReadSettings();
+                    }
                 }
             }
             grblStateLast = grblStateNow;
@@ -684,6 +702,21 @@ namespace GrblPlotter
             EventCollector.SetStreaming(tmp);       // RstGrbl 1.1f ['$' for help] COM9
 
             if (logStreamData) AddToLog("* Logging enabled");
+
+            // AutoWriter fix (candidate I-a): after a soft reset the controller stays in ALARM:3
+            // until the operator sends $X. ProcessSend() only releases a '$' command while the
+            // controller is IDLE or CHECK, so queueing the automatic settings read here would wedge
+            // the send queue for good: the operator's next click would queue up behind a line that
+            // can never leave, and every button on this window would look dead. $X survives because
+            // RequestSend writes it straight to the port instead of queueing it. Measured on
+            // 2026-10-06 01:35: sendBuffer sat at snt:0 cnfrmnd:1 cnt:10 with code:'$$' state:alarm.
+            if (grblStateNow == GrblState.alarm)
+            {
+                AddToLog("⚠ 控制器处于报警状态：已跳过自动读取设置（报警时队列无法发出 $ 命令）。");
+                AddToLog("  请先按 $X (Kill alarm lock) 解锁，再点「检查GRBL」读取设置。");
+                return;
+            }
+
             AddToLog("* Read grbl settings, hide response from '$$', '$#'");
 
             if (Grbl.isVersion_0)
@@ -705,6 +738,7 @@ namespace GrblPlotter
             rtsrResponse = 0;       // real time status report sent / receive differnence                    
             isHoming = false;
             ResetStreaming();       // handleRX_Reset
+            UpdateControls();       // AutoWriter fix (candidate H): refresh the COM CNC command row after a welcome/reset
             //	IsGrblVers0 = true;	
             //	resetProcessed = false;
             lblSrBf.Text = "";
@@ -814,6 +848,7 @@ namespace GrblPlotter
             AddToLog(string.Format("< {0} \t{1}", rxStringTmp, Grbl.GetAlarmDescription(rxStringTmp)));
             lastError = rxStringTmp + " " + Grbl.GetAlarmDescription(rxStringTmp) + "\r\n";
             ResetStreaming();   // ALARM
+            UpdateControls();   // AutoWriter fix (candidate H): alarm path reset the streaming flag but left the command row disabled
             if (iamSerial == 1)
                 Grbl.lastMessage = lastError;
             IsHeightProbing = false;
@@ -960,6 +995,11 @@ namespace GrblPlotter
         { return RequestSend(data, 0, keepComments); }
         public bool RequestSend(string data, int lineNr, bool keepComments)
         {
+            if (Program.MachineInspectionMode && !AutoWriter.InspectionPolicy.AllowsLine(data, Program.ApprovedAxisStep))
+            {
+                AddToLog("AutoWriter inspection blocked command: " + data);
+                return false;
+            }
             if (!string.IsNullOrEmpty(data))
             {
                 if ((isStreamingRequestPause) && (grblStateNow == GrblState.run))
@@ -988,6 +1028,14 @@ namespace GrblPlotter
 
                         if (tmp == "$X")
                         {
+                            // AutoWriter fix (candidate I-a): $X is written straight to the port, so it
+                            // works even while the queue is wedged. Anything still queued from the
+                            // alarm period can never leave the queue (ProcessSend holds back every
+                            // '$' line while the controller is not IDLE/CHECK), and it would keep the
+                            // buttons looking dead after the alarm is gone. Drop it here so the queue
+                            // recovers the moment the operator unlocks the controller.
+                            lock (sendDataLock)
+                            { sendBuffer.Clear(); }
                             SerialPortDataSend(tmp + lineEndTXgrbl);
                             return IsConnectedToGrbl();
                         }
@@ -1696,6 +1744,25 @@ namespace GrblPlotter
                     { blen += buffer[i].Length + 1; }    // length + \r
                 }
                 return blen;
+            }
+            /* 2026-10-06 candidate J (R6): lines written to the OS but never confirmed by an 'ok'
+             * are unreliable. grbl reporting IDLE proves it never received them (R6 2026-10-06:
+             * the two in-flight lines at pause were lost on the way and a stroke was skipped on
+             * paper). Drop every entry from the confirmed index onward, so the caller can rewind
+             * and re-send them. Returns the number of entries removed. */
+            public int RemoveUnconfirmedTail()
+            {
+                int removed = buffer.Count - confirmed;
+                if (removed > 0)
+                {
+                    lock (bufferLock)
+                    {
+                        buffer.RemoveRange(confirmed, removed);
+                        lineNr.RemoveRange(confirmed, removed);
+                    }
+                    sent = confirmed;
+                }
+                return removed;
             }
 
             public bool Insert(int index, string cmt)

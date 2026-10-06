@@ -996,7 +996,16 @@
       <Value Profile="(Default)">True</Value>
     </Setting>
     <Setting Name="gui2DPenUpShow" Type="System.Boolean" Scope="User">
-      <Value Profile="(Default)">False</Value>
+      <Value Profile="(Default)">True</Value>
+    </Setting>
+    <Setting Name="gui2DPenZEnable" Type="System.Boolean" Scope="User">
+      <Value Profile="(Default)">True</Value>
+    </Setting>
+    <Setting Name="gui2DPenZUpValue" Type="System.Double" Scope="User">
+      <Value Profile="(Default)">0</Value>
+    </Setting>
+    <Setting Name="gui2DPenZDownValue" Type="System.Double" Scope="User">
+      <Value Profile="(Default)">5</Value>
     </Setting>
     <Setting Name="gui2DRulerShow" Type="System.Boolean" Scope="User">
       <Value Profile="(Default)">True</Value>

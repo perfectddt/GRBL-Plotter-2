@@ -328,7 +328,7 @@
     <value>System.Windows.Forms.ContextMenuStrip, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
   </data>
   <data name="tableLayoutPanel1.ColumnCount" type="System.Int32, mscorlib">
-    <value>9</value>
+    <value>11</value>
   </data>
   <data name="tableLayoutPanel3.ColumnCount" type="System.Int32, mscorlib">
     <value>4</value>
@@ -1367,6 +1367,72 @@ Not for GRBL Vers. &lt; 1.0</value>
   <data name="&gt;&gt;btnGRBLCmndBuild.ZOrder" xml:space="preserve">
     <value>7</value>
   </data>
+  <data name="btnGRBLUnlock.Dock" type="System.Windows.Forms.DockStyle, System.Windows.Forms">
+    <value>Fill</value>
+  </data>
+  <data name="btnGRBLUnlock.Location" type="System.Drawing.Point, System.Drawing">
+    <value>278, 414</value>
+  </data>
+  <data name="btnGRBLUnlock.Margin" type="System.Windows.Forms.Padding, System.Windows.Forms">
+    <value>1, 1, 1, 1</value>
+  </data>
+  <data name="btnGRBLUnlock.Size" type="System.Drawing.Size, System.Drawing">
+    <value>53, 26</value>
+  </data>
+  <data name="btnGRBLUnlock.TabIndex" type="System.Int32, mscorlib">
+    <value>36</value>
+  </data>
+  <data name="btnGRBLUnlock.Text" xml:space="preserve">
+    <value>解锁</value>
+  </data>
+  <data name="btnGRBLUnlock.ToolTip" xml:space="preserve">
+    <value>Unlock (kill alarm lock) and re-read settings</value>
+  </data>
+  <data name="&gt;&gt;btnGRBLUnlock.Name" xml:space="preserve">
+    <value>btnGRBLUnlock</value>
+  </data>
+  <data name="&gt;&gt;btnGRBLUnlock.Type" xml:space="preserve">
+    <value>System.Windows.Forms.Button, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </data>
+  <data name="&gt;&gt;btnGRBLUnlock.Parent" xml:space="preserve">
+    <value>tableLayoutPanel1</value>
+  </data>
+  <data name="&gt;&gt;btnGRBLUnlock.ZOrder" xml:space="preserve">
+    <value>20</value>
+  </data>
+  <data name="btnGRBLDatum.Dock" type="System.Windows.Forms.DockStyle, System.Windows.Forms">
+    <value>Fill</value>
+  </data>
+  <data name="btnGRBLDatum.Location" type="System.Drawing.Point, System.Drawing">
+    <value>334, 414</value>
+  </data>
+  <data name="btnGRBLDatum.Margin" type="System.Windows.Forms.Padding, System.Windows.Forms">
+    <value>1, 1, 1, 1</value>
+  </data>
+  <data name="btnGRBLDatum.Size" type="System.Drawing.Size, System.Drawing">
+    <value>53, 26</value>
+  </data>
+  <data name="btnGRBLDatum.TabIndex" type="System.Int32, mscorlib">
+    <value>37</value>
+  </data>
+  <data name="btnGRBLDatum.Text" xml:space="preserve">
+    <value>置零</value>
+  </data>
+  <data name="btnGRBLDatum.ToolTip" xml:space="preserve">
+    <value>Set current position as work zero (software re-datum, no motion)</value>
+  </data>
+  <data name="&gt;&gt;btnGRBLDatum.Name" xml:space="preserve">
+    <value>btnGRBLDatum</value>
+  </data>
+  <data name="&gt;&gt;btnGRBLDatum.Type" xml:space="preserve">
+    <value>System.Windows.Forms.Button, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </data>
+  <data name="&gt;&gt;btnGRBLDatum.Parent" xml:space="preserve">
+    <value>tableLayoutPanel1</value>
+  </data>
+  <data name="&gt;&gt;btnGRBLDatum.ZOrder" xml:space="preserve">
+    <value>21</value>
+  </data>
   <data name="btnGRBLHardReset.Dock" type="System.Windows.Forms.DockStyle, System.Windows.Forms">
     <value>Fill</value>
   </data>
@@ -1621,7 +1687,7 @@ Success depends on used hardware (DTR, RTS wired?)</value>
     <value>6</value>
   </data>
   <data name="tableLayoutPanel1.Size" type="System.Drawing.Size, System.Drawing">
-    <value>326, 441</value>
+    <value>447, 441</value>
   </data>
   <data name="tableLayoutPanel1.TabIndex" type="System.Int32, mscorlib">
     <value>38</value>
@@ -1639,7 +1705,7 @@ Success depends on used hardware (DTR, RTS wired?)</value>
     <value>1</value>
   </data>
   <data name="tableLayoutPanel1.LayoutSettings" type="System.Windows.Forms.TableLayoutSettings, System.Windows.Forms">
-    <value>&lt;?xml version="1.0" encoding="utf-16"?&gt;&lt;TableLayoutSettings&gt;&lt;Controls&gt;&lt;Control Name="PanelEthernet" Row="1" RowSpan="1" Column="0" ColumnSpan="9" /&gt;&lt;Control Name="btnGRBLCommand0" Row="5" RowSpan="1" Column="0" ColumnSpan="1" /&gt;&lt;Control Name="PanelSeriell" Row="0" RowSpan="1" Column="0" ColumnSpan="9" /&gt;&lt;Control Name="groupBox1" Row="2" RowSpan="1" Column="0" ColumnSpan="9" /&gt;&lt;Control Name="btnGRBLCommand1" Row="5" RowSpan="1" Column="1" ColumnSpan="1" /&gt;&lt;Control Name="btnGRBLCommand2" Row="5" RowSpan="1" Column="2" ColumnSpan="1" /&gt;&lt;Control Name="btnGRBLCmndParser" Row="5" RowSpan="1" Column="3" ColumnSpan="1" /&gt;&lt;Control Name="btnGRBLCmndBuild" Row="5" RowSpan="1" Column="4" ColumnSpan="1" /&gt;&lt;Control Name="btnGRBLHardReset" Row="5" RowSpan="1" Column="8" ColumnSpan="1" /&gt;&lt;Control Name="cBCommand" Row="4" RowSpan="1" Column="2" ColumnSpan="6" /&gt;&lt;Control Name="btnGRBLCommand3" Row="5" RowSpan="1" Column="5" ColumnSpan="1" /&gt;&lt;Control Name="btnSend" Row="4" RowSpan="1" Column="8" ColumnSpan="1" /&gt;&lt;Control Name="btnGRBLCommand4" Row="5" RowSpan="1" Column="6" ColumnSpan="1" /&gt;&lt;Control Name="btnClear" Row="4" RowSpan="1" Column="0" ColumnSpan="2" /&gt;&lt;Control Name="btnGRBLReset" Row="5" RowSpan="1" Column="7" ColumnSpan="1" /&gt;&lt;Control Name="rtbLog" Row="3" RowSpan="1" Column="0" ColumnSpan="9" /&gt;&lt;/Controls&gt;&lt;Columns Styles="Percent,10,Percent,10,Percent,10,Percent,10,Percent,10,Percent,10,Percent,10,Percent,17,Percent,13" /&gt;&lt;Rows Styles="AutoSize,0,AutoSize,0,Absolute,94,Percent,100,Absolute,28,Absolute,28" /&gt;&lt;/TableLayoutSettings&gt;</value>
+    <value>&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-16&quot;?&gt;&lt;TableLayoutSettings&gt;&lt;Controls&gt;&lt;Control Name=&quot;PanelEthernet&quot; Row=&quot;1&quot; RowSpan=&quot;1&quot; Column=&quot;0&quot; ColumnSpan=&quot;9&quot; /&gt;&lt;Control Name=&quot;btnGRBLCommand0&quot; Row=&quot;5&quot; RowSpan=&quot;1&quot; Column=&quot;0&quot; ColumnSpan=&quot;1&quot; /&gt;&lt;Control Name=&quot;PanelSeriell&quot; Row=&quot;0&quot; RowSpan=&quot;1&quot; Column=&quot;0&quot; ColumnSpan=&quot;9&quot; /&gt;&lt;Control Name=&quot;groupBox1&quot; Row=&quot;2&quot; RowSpan=&quot;1&quot; Column=&quot;0&quot; ColumnSpan=&quot;9&quot; /&gt;&lt;Control Name=&quot;btnGRBLCommand1&quot; Row=&quot;5&quot; RowSpan=&quot;1&quot; Column=&quot;1&quot; ColumnSpan=&quot;1&quot; /&gt;&lt;Control Name=&quot;btnGRBLCommand2&quot; Row=&quot;5&quot; RowSpan=&quot;1&quot; Column=&quot;2&quot; ColumnSpan=&quot;1&quot; /&gt;&lt;Control Name=&quot;btnGRBLCmndParser&quot; Row=&quot;5&quot; RowSpan=&quot;1&quot; Column=&quot;3&quot; ColumnSpan=&quot;1&quot; /&gt;&lt;Control Name=&quot;btnGRBLCmndBuild&quot; Row=&quot;5&quot; RowSpan=&quot;1&quot; Column=&quot;4&quot; ColumnSpan=&quot;1&quot; /&gt;&lt;Control Name=&quot;btnGRBLHardReset&quot; Row=&quot;5&quot; RowSpan=&quot;1&quot; Column=&quot;8&quot; ColumnSpan=&quot;1&quot; /&gt;&lt;Control Name=&quot;cBCommand&quot; Row=&quot;4&quot; RowSpan=&quot;1&quot; Column=&quot;2&quot; ColumnSpan=&quot;6&quot; /&gt;&lt;Control Name=&quot;btnGRBLCommand3&quot; Row=&quot;5&quot; RowSpan=&quot;1&quot; Column=&quot;5&quot; ColumnSpan=&quot;1&quot; /&gt;&lt;Control Name=&quot;btnSend&quot; Row=&quot;4&quot; RowSpan=&quot;1&quot; Column=&quot;8&quot; ColumnSpan=&quot;1&quot; /&gt;&lt;Control Name=&quot;btnGRBLCommand4&quot; Row=&quot;5&quot; RowSpan=&quot;1&quot; Column=&quot;6&quot; ColumnSpan=&quot;1&quot; /&gt;&lt;Control Name=&quot;btnClear&quot; Row=&quot;4&quot; RowSpan=&quot;1&quot; Column=&quot;0&quot; ColumnSpan=&quot;2&quot; /&gt;&lt;Control Name=&quot;btnGRBLReset&quot; Row=&quot;5&quot; RowSpan=&quot;1&quot; Column=&quot;7&quot; ColumnSpan=&quot;1&quot; /&gt;&lt;Control Name=&quot;rtbLog&quot; Row=&quot;3&quot; RowSpan=&quot;1&quot; Column=&quot;0&quot; ColumnSpan=&quot;9&quot; /&gt;&lt;/Controls&gt;&lt;Columns Styles=&quot;Percent,6,Percent,6,Percent,6,Percent,6,Percent,6,Percent,6,Percent,6,Percent,14,Percent,11,Percent,11,Percent,22&quot; /&gt;&lt;Rows Styles=&quot;AutoSize,0,AutoSize,0,Absolute,94,Percent,100,Absolute,28,Absolute,28&quot; /&gt;&lt;/TableLayoutSettings&gt;</value>
   </data>
   <data name="btnClear.Dock" type="System.Windows.Forms.DockStyle, System.Windows.Forms">
     <value>Fill</value>
@@ -1684,10 +1750,10 @@ Success depends on used hardware (DTR, RTS wired?)</value>
     <value>96, 96</value>
   </data>
   <data name="$this.ClientSize" type="System.Drawing.Size, System.Drawing">
-    <value>326, 441</value>
+    <value>447, 441</value>
   </data>
   <data name="$this.MinimumSize" type="System.Drawing.Size, System.Drawing">
-    <value>342, 480</value>
+    <value>463, 480</value>
   </data>
   <data name="$this.StartPosition" type="System.Windows.Forms.FormStartPosition, System.Windows.Forms">
     <value>CenterScreen</value>

@@ -124,14 +124,25 @@ namespace GrblPlotter
 
             if (!newL.ismachineCoordG53)
             {
-                zDown = (newL.actualPos.Z < 0) || (newL.codeLine.Contains("(PD"));
+                // Pen-down is "Z < 0" in GRBL-Plotter's convention. A machine that presses the pen at a
+                // positive Z (the AutoWriter profile: up 0, down 5) matches none of the built-in rules,
+                // so PenZClassifier adds the missing Z-transition test. See PenZClassifier.cs.
+                zDown = (newL.actualPos.Z < 0) || (newL.codeLine.Contains("(PD"))
+                        || PenZClassifier.IsPenDownMove(oldL.actualPos.Z, newL.actualPos.Z,
+                               Properties.Settings.Default.gui2DPenZEnable,
+                               Properties.Settings.Default.gui2DPenZUpValue,
+                               Properties.Settings.Default.gui2DPenZDownValue);
                 if (((newL.motionMode > 0) && (oldL.motionMode == 0)) || zDown)  // G0 = PenUp
                 {
                     path = pathPenDown;
                     path.StartFigure();
                     pathActualDown?.StartFigure();
                 }
-                zUp = oldL.codeLine.Contains("(PU") || ((newL.actualPos.Z > 0) && (oldL.actualPos.Z < 0));
+                zUp = oldL.codeLine.Contains("(PU") || ((newL.actualPos.Z > 0) && (oldL.actualPos.Z < 0))
+                        || PenZClassifier.IsPenUpMove(oldL.actualPos.Z, newL.actualPos.Z,
+                               Properties.Settings.Default.gui2DPenZEnable,
+                               Properties.Settings.Default.gui2DPenZUpValue,
+                               Properties.Settings.Default.gui2DPenZDownValue);
                 if (((newL.motionMode == 0) && (oldL.motionMode > 0)) || zUp)
                 { path = pathPenUp; path.StartFigure(); }
 

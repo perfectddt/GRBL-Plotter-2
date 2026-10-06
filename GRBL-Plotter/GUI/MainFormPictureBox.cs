@@ -113,6 +113,12 @@ namespace GrblPlotter
         private readonly object lockObject = new object();
         private bool shiftedDisplay = false;
 
+        // Display-only orientation of the 2D view (mirror / quarter turns). The operator uses it to
+        // line the picture up with the sheet on the machine; it never touches the G-code, the sent
+        // program or any stored coordinate. While it is off the identity the view is drawn exactly
+        // as before, so an untouched installation behaves unchanged.
+        private readonly ViewTransform viewTransform = new ViewTransform();
+
         private readonly bool logSelection = false;  //true;
 
         private XmlMarkerType markerType = XmlMarkerType.Figure;
@@ -134,10 +140,24 @@ namespace GrblPlotter
                 yRange = (double)Properties.Settings.Default.machineLimitsRangeY + 2 * offset;
             }
 
-            if ((xRange == 0) || (yRange == 0))
+            double fitX, fitY;
+            ViewFitRange(xRange, yRange, out fitX, out fitY);
+            if ((fitX == 0) || (fitY == 0))
                 picScaling = 1;
             else
-                picScaling = Math.Min(pictureBox1.Width / (xRange), pictureBox1.Height / (yRange));               // calculate scaling px/unit
+                picScaling = Math.Min(pictureBox1.Width / (fitX), pictureBox1.Height / (fitY));               // calculate scaling px/unit
+        }
+
+        /// <summary>
+        /// The extents the view has to fit. An odd quarter turn shows the same graphic with X and Y
+        /// swapped, so the scaling has to follow - otherwise a turned drawing is scaled for the
+        /// wrong aspect ratio and runs out of the window. Without a turn this is a plain pass
+        /// through of the drawing bounds.
+        /// </summary>
+        private void ViewFitRange(double xRange, double yRange, out double fitX, out double fitY)
+        {
+            if (viewTransform.SwapsAxes) { fitX = yRange; fitY = xRange; }
+            else { fitX = xRange; fitY = yRange; }
         }
 
         /******************************************************************
@@ -161,10 +181,12 @@ namespace GrblPlotter
             }
 
 
-            if ((xRange == 0) || (yRange == 0))
+            double fitX, fitY;
+            ViewFitRange(xRange, yRange, out fitX, out fitY);
+            if ((fitX == 0) || (fitY == 0))
                 picScaling = 1;
             else
-                picScaling = Math.Min(pictureBox1.Width / (xRange), pictureBox1.Height / (yRange));               // calculate scaling px/unit
+                picScaling = Math.Min(pictureBox1.Width / (fitX), pictureBox1.Height / (fitY));               // calculate scaling px/unit
 
             if ((picScaling > 0.001) && (picScaling < 10000))
             {
@@ -185,8 +207,9 @@ namespace GrblPlotter
                 else
                 { relposX = relposX * ratioPic / ratioVisu; }
 
-                picAbsPos.X = relposX * xRange + minx;
-                picAbsPos.Y = maxposY - relposY * yRange + miny;
+                // A mirrored or turned view shows the picture somewhere else, but the read-out has to
+                // keep telling the truth about the machine, so the picked point is mapped back first.
+                picAbsPos = ViewToMachine(new XyPoint(relposX * xRange + minx, maxposY - relposY * yRange + miny), minx, maxx, miny, maxy);
 
 
                 PointF viewDimMin = GetStandardizedPosition(new Point(0, 0));
@@ -209,6 +232,11 @@ namespace GrblPlotter
                 try { e.Graphics.Transform = pBoxTransform; } catch (Exception err) { Logger.Error(err, "PictureBox1_Paint - pBoxTransform2 nok"); }
                 e.Graphics.ScaleTransform((float)picScaling, (float)-picScaling);           // apply scaling (flip Y)
                 e.Graphics.TranslateTransform((float)-minx, (float)(-maxposY - miny));       // apply offset
+                // Display-only orientation, applied on the world side of the view scaling so the
+                // graphic turns about the centre of the drawing bounds. The identity state adds
+                // nothing, so an untouched view draws exactly as before.
+                if (!viewTransform.IsIdentity)
+                    e.Graphics.MultiplyTransform(viewTransform.BuildMatrix((float)((minx + maxx) / 2.0), (float)((miny + maxy) / 2.0)), MatrixOrder.Prepend);
 
                 try
                 {
@@ -307,6 +335,24 @@ namespace GrblPlotter
                                     (mousePos.Y - pBoxTransform.OffsetY) / pictureBox1.Height / zoomFactor);
             return tmp;
         }
+
+        /// <summary>
+        /// Maps a point taken off the screen - which carries the display transform - back to real
+        /// work coordinates. Everything that has to be true about the machine (the position
+        /// read-out, the marker, the selection distance) goes through here, so a mirrored or turned
+        /// picture stays a pure matter of how the operator looks at it.
+        /// </summary>
+        private XyPoint ViewToMachine(XyPoint viewPos, double minx, double maxx, double miny, double maxy)
+        {
+            if (viewTransform.IsIdentity) return viewPos;
+            using (Matrix inverse = viewTransform.BuildMatrix((float)((minx + maxx) / 2.0), (float)((miny + maxy) / 2.0)))
+            {
+                inverse.Invert();
+                PointF[] points = { new PointF((float)viewPos.X, (float)viewPos.Y) };
+                inverse.TransformPoints(points);
+                return new XyPoint(points[0].X, points[0].Y);
+            }
+        }
         private void OnPaint_scaling(Graphics e)
         {
             double minx = VisuGCode.drawingSize.minX;                  // extend dimensions
@@ -317,9 +363,16 @@ namespace GrblPlotter
             double yRange = (maxy - miny);
             if ((xRange > 0) && (yRange > 0))
             {
-                double _picScaling = Math.Min(pictureBox1.Width / (xRange), pictureBox1.Height / (yRange));               // calculate scaling px/unit
+                double fitX, fitY;
+                ViewFitRange(xRange, yRange, out fitX, out fitY);
+                double _picScaling = Math.Min(pictureBox1.Width / (fitX), pictureBox1.Height / (fitY));               // calculate scaling px/unit
                 e.ScaleTransform((float)_picScaling, (float)-_picScaling);        // apply scaling (flip Y)
                 e.TranslateTransform((float)-minx, (float)(-yRange - miny));    // apply offset
+                // The background-image path has to carry the same display orientation, otherwise a
+                // mirrored or turned view would fall back to the untransformed picture while the
+                // streaming background image is in use.
+                if (!viewTransform.IsIdentity)
+                    e.MultiplyTransform(viewTransform.BuildMatrix((float)((minx + maxx) / 2.0), (float)((miny + maxy) / 2.0)), MatrixOrder.Prepend);
             }
         }
 
@@ -638,7 +691,10 @@ namespace GrblPlotter
             /* select Figure if MouseDown and MouseUp position are close together */
             if (Rb2DViewMode1.Checked)
             {
-                if (mouseDownLeftButton && ((PointDistance(mouseDownPos, mouseUpPos) < 10) || selectionWasChanged))
+                // A mirrored or turned view is for looking, not for editing: the picture is no longer
+                // where the code says it is, so a click must not pick a figure. Panning, zooming and
+                // the position read-out keep working; "Reset view orientation" brings editing back.
+                if (viewTransform.IsIdentity && mouseDownLeftButton && ((PointDistance(mouseDownPos, mouseUpPos) < 10) || selectionWasChanged))
                 {
                     SetFigureSelectionOnClick(selectionWasChanged);
                     if (!VisuGCode.CodeBlocksAvailable())
@@ -648,7 +704,8 @@ namespace GrblPlotter
                         FctbSetBookmark();
                     }
                 }
-                applyLastTransformToolStripMenuItem.Visible = SelectionHandle.IsActive;
+                if (viewTransform.IsIdentity)
+                    applyLastTransformToolStripMenuItem.Visible = SelectionHandle.IsActive;
 
                 previousClick = now;
                 pBoxTransform = tmp.Clone();    // restore previous view
@@ -1095,6 +1152,9 @@ namespace GrblPlotter
                 penRuler.Width = (float)Properties.Settings.Default.gui2DWidthRuler * factorWidth;
                 penUp.Width = (float)Properties.Settings.Default.gui2DWidthPenUp * factorWidth;
                 penUp.LineJoin = LineJoin.Round;
+                // Pen-up travel is dashed so the raised-pen moves read differently from the drawn
+                // strokes at a glance: green dashes are "pen up", red solid is "pen down".
+                penUp.DashStyle = DashStyle.Dash;
                 penDown.LineJoin = LineJoin.Round;
                 penDown.StartCap = LineCap.Round;
                 penDown.EndCap = LineCap.Round;
@@ -1561,6 +1621,77 @@ namespace GrblPlotter
             else
             { Logger.Error("ReplaceXmlAttribute  code:{0}  xmlTag:{1}  xmlAtt:{2}  newVal:{3}  posAttStart:{4}  posAttEnd:{5}", code, xmlTag, xmlAtt, newVal, posAttStart, posAttEnd); }
         }
+
+        #region view orientation (display only)
+
+        private ToolStripMenuItem viewOrientationMirrorX;
+        private ToolStripMenuItem viewOrientationMirrorY;
+        private ToolStripMenuItem viewOrientationReset;
+
+        /// <summary>
+        /// Adds the display-orientation entries to the View menu. They are built in code instead of
+        /// in the designer so the existing resource strings stay untouched.
+        ///
+        /// These entries only change the picture. The G-code menu entries (Mirror X / Mirror Y /
+        /// Rotate ...) are a different thing: those rewrite the code and therefore change what the
+        /// machine writes. The labels say "仅显示" so the two are not confused.
+        /// </summary>
+        private void SetupViewOrientationMenu()
+        {
+            if (viewOrientationMirrorX != null) return;
+            if (viewToolStripMenuItem == null) return;
+
+            viewOrientationMirrorX = new ToolStripMenuItem("左右翻转（仅显示）") { CheckOnClick = true };
+            viewOrientationMirrorX.Click += (sender, args) => { viewTransform.ToggleMirrorX(); ApplyViewOrientationChange(); };
+
+            viewOrientationMirrorY = new ToolStripMenuItem("上下翻转（仅显示）") { CheckOnClick = true };
+            viewOrientationMirrorY.Click += (sender, args) => { viewTransform.ToggleMirrorY(); ApplyViewOrientationChange(); };
+
+            ToolStripMenuItem rotateClockwise = new ToolStripMenuItem("顺时针旋转 90°（仅显示）");
+            rotateClockwise.Click += (sender, args) => { viewTransform.RotateClockwise(); ApplyViewOrientationChange(); };
+
+            ToolStripMenuItem rotateCounterClockwise = new ToolStripMenuItem("逆时针旋转 90°（仅显示）");
+            rotateCounterClockwise.Click += (sender, args) => { viewTransform.RotateCounterClockwise(); ApplyViewOrientationChange(); };
+
+            viewOrientationReset = new ToolStripMenuItem("重置视图方向");
+            viewOrientationReset.Click += (sender, args) => { viewTransform.Reset(); ApplyViewOrientationChange(); };
+
+            viewToolStripMenuItem.DropDownItems.Add(new ToolStripSeparator());
+            viewToolStripMenuItem.DropDownItems.Add(viewOrientationMirrorX);
+            viewToolStripMenuItem.DropDownItems.Add(viewOrientationMirrorY);
+            viewToolStripMenuItem.DropDownItems.Add(rotateClockwise);
+            viewToolStripMenuItem.DropDownItems.Add(rotateCounterClockwise);
+            viewToolStripMenuItem.DropDownItems.Add(viewOrientationReset);
+
+            SyncViewOrientationMenu();
+        }
+
+        /// <summary>Keeps the mirror ticks and the enabled state of the reset entry in step.</summary>
+        private void SyncViewOrientationMenu()
+        {
+            if (viewOrientationMirrorX == null) return;
+            viewOrientationMirrorX.Checked = viewTransform.MirrorX;
+            viewOrientationMirrorY.Checked = viewTransform.MirrorY;
+            viewOrientationReset.Enabled = !viewTransform.IsIdentity;
+        }
+
+        /// <summary>
+        /// Applies a change of the display orientation. The view is reset to fit because a quarter
+        /// turn swaps the visible extents and the previous pan/zoom would leave the graphic outside
+        /// the window. An active selection is dropped as well: its handles sit at screen positions
+        /// that no longer match the code, so keeping them would invite a wrong edit.
+        /// </summary>
+        private void ApplyViewOrientationChange()
+        {
+            ResetPicBoxSelections();
+            pBoxTransform.Reset();
+            zoomFactor = 1;
+            SyncViewOrientationMenu();
+            pictureBox1.Invalidate();
+            StatusStripSet(1, "视图方向：" + viewTransform.Describe() + "（仅显示，不影响 G 代码）", Color.Yellow);
+        }
+
+        #endregion
 
         private void ResetPicBoxSelections()
         {

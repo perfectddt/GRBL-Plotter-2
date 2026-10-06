@@ -77,6 +77,7 @@
 // OnRaiseStreamEvent(new StreamEventArgs((int)lineNr, codeFinish, buffFinish, status));
 // OnRaisePosEvent(new PosEventArgs(posWork, posMachine, grblStateNow, machineState, mParserState, rxString));// lastCmd));
 
+using GrblPlotter.AutoWriter;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -121,6 +122,11 @@ namespace GrblPlotter
         private bool useSerial3 = false;
         private bool serial3Busy = false;
         private bool useEthernet = false;
+
+        // AutoWriter: armed by the 「解锁」 button ($X). While set, the first IDLE moment after the
+        // unlock re-reads the grbl settings automatically, so the operator does not have to remember
+        // to press 「检查GRBL」 as well. See AutoWriter/AlarmUnlock.cs.
+        private bool pendingUnlockSettingsRead = false;
 
         // Note: receive-event waits for line-end char, if missing -> timeout exception
         private const string lineEndRX = "\n";      // read - grbl accepts '\n' or '\r' and sends "\r\n", but Marlin sends '\n'
@@ -238,7 +244,9 @@ namespace GrblPlotter
             LoadSettings();         // set last COM and Baud
             RefreshPorts();         // scan for COMs
             useEthernet = CbEthernetUse.Checked;
-            if (!useEthernet)
+            if (Program.OfflineMode || Program.MachineInspectionMode)
+                AddToLog("Offline baseline: automatic connection disabled");
+            else if (!useEthernet)
                 this.BeginInvoke(new EventHandler(ConnectToGrbl));  //    ConnectToGrbl(false);    // OpenPortSerial();             // open COM
             else
                 AddToLog("No auto-connect for ethernet");
@@ -730,7 +738,7 @@ namespace GrblPlotter
                 rtbLog.Clear();
                 if (RefreshPorts())				// check if last used port is listed
                 {
-                    if (Properties.Settings.Default.ctrlUseSerialPortFixer)
+                    if (!Program.MachineInspectionMode && Properties.Settings.Default.ctrlUseSerialPortFixer)
                     {
                         try
                         { SerialPortFixer.Execute(cbPort.Text); }
@@ -813,6 +821,7 @@ namespace GrblPlotter
         //Send reset sentence
         private void JustgrblReset()
         {
+            if (Program.MachineInspectionMode) return;
             var dataArray = new byte[] { 24 };//Ctrl-X
             if (IsConnectedToGrbl())
             {
@@ -894,6 +903,7 @@ namespace GrblPlotter
 
         public void GrblReset(bool savePos)      //Stop/reset button
         {
+            if (Program.MachineInspectionMode) return;
             StateReset(savePos);
             AddToLog("> [CTRL-X] reset");
             resetProcessed = false;
@@ -907,6 +917,7 @@ namespace GrblPlotter
 
         public void GrblHardReset()      //Stop/reset button
         {
+            if (Program.MachineInspectionMode) return;
             useEthernet = CbEthernetUse.Checked;
             if (useEthernet)
                 return;
@@ -1073,6 +1084,8 @@ namespace GrblPlotter
 
         private void SerialPortDataSend(byte[] tmp, int a, int b)
         {
+            if (Program.MachineInspectionMode &&
+                (b != 1 || tmp[a] != (byte)'?')) return;
             if (logTransmit) Logger.Trace("SerialPortDataSend data:{0} IsConnectedToGrbl:{1} Connected:{2} useEthernet:{3}  serOpen:{4}", tmp.ToString(), IsConnectedToGrbl(), Connected, useEthernet, serialPort.IsOpen);
             if (IsConnectedToGrbl())
             {
@@ -1124,6 +1137,7 @@ namespace GrblPlotter
         }
         private bool SerialPortDataSend(string tmp)
         {
+            if (Program.MachineInspectionMode && !AutoWriter.InspectionPolicy.AllowsLine(tmp, Program.ApprovedAxisStep)) return false;
             if (logTransmit) Logger.Trace("SerialPortDataSend data:{0} IsConnectedToGrbl:{1} Connected:{2} useEthernet:{3}  serOpen:{4}", tmp, IsConnectedToGrbl(), Connected, useEthernet, serialPort.IsOpen);
             //   if (IsConnectedToGrbl() && (!string.IsNullOrEmpty(tmp)))
             if (!string.IsNullOrEmpty(tmp))
@@ -1285,6 +1299,10 @@ namespace GrblPlotter
             btnGRBLCommand4.Enabled = isConnected && (!isStreaming || isStreamingPause);
             btnCheckGRBL.Enabled = isConnected && (!isStreaming || isStreamingPause);// && !isGrblVers0;
             btnGRBLReset.Enabled = isConnected;// & !isSensing;
+            btnGRBLUnlock.Enabled = isConnected;
+            // The datum command changes the work offset, so it must not fire mid-program: every
+            // remaining G-code line would be reinterpreted against the new origin.
+            btnGRBLDatum.Enabled = isConnected && (!isStreaming || isStreamingPause);
             if (iamSerial > 1)
             {
                 btnCheckGRBL.Visible = false;
@@ -1481,8 +1499,96 @@ namespace GrblPlotter
         { RequestSend("$N"); }
         private void BtnGRBLCommand4_Click(object sender, EventArgs e)      // $X - Kill alarm lock
         { RequestSend("$X"); }
+
+        /// <summary>
+        /// AutoWriter: the 「解锁」 button. One press instead of "$X" then 「检查GRBL」.
+        ///
+        /// Measured on 2026-10-06: after ALARM:3 the operator had to press '$X' and then
+        /// 「检查GRBL」, because candidate I-a deliberately skips the automatic settings read while
+        /// the controller is in alarm (queuing '$' commands there wedges the send queue for good).
+        /// This button keeps that guard but closes the loop: it sends '$X', arms a deferred
+        /// settings read, and ControlSerialFormInterface picks it up on the first IDLE report.
+        ///
+        /// The confirmation is deliberate. '$X' itself is harmless in IDLE, but this machine cannot
+        /// home, so an unlock that silently lets the operator move again after a position-losing
+        /// alarm is exactly the case that needs the re-datum reminder spelled out.
+        /// </summary>
+        private void BtnGRBLUnlock_Click(object sender, EventArgs e)
+        {
+            if (MessageBox.Show(this, AlarmUnlock.BuildMessage(grblStateNow == GrblState.alarm, isStreaming),
+                    AlarmUnlock.Title, MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
+                    MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+                return;
+
+            AddToLog(AlarmUnlock.LogSending);
+
+            // Candidate I-a: RequestSend writes '$X' straight to the port and clears sendBuffer, so
+            // this works even though the alarm period left a dead '$' line wedged in the queue.
+            RequestSend(AlarmUnlock.UnlockCommand);
+
+            // Arm the deferred read. It only fires once the controller is actually IDLE, because
+            // ProcessSend() blocks '$' lines in every other state.
+            pendingUnlockSettingsRead = true;
+        }
+
+        /// <summary>
+        /// AutoWriter: the 「置零」 button. A software re-datum: the position the head is standing at
+        /// right now becomes work zero. Requested on 2026-10-06 as 「软件里变零，图示里也要回原点，
+        /// 物理不用动」, which is exactly G10 L20 P0 - the firmware adjusts the work offset, so MPos is
+        /// untouched and no stepper turns. This machine cannot home ($22 = 0), so a '$H' button would
+        /// be dead weight; this is the re-datum the operator can actually perform.
+        ///
+        /// The 2D view needs no special handling here: OnRaisePosEvent() invalidates pictureBox1
+        /// whenever posWork changes, and posWork is recomputed from MPos - WCO on every status
+        /// report, so the marker follows the firmware automatically.
+        /// </summary>
+        private void BtnGRBLDatum_Click(object sender, EventArgs e)
+        {
+            // SerialPortOpen is the field the other command buttons gate on; the isConnected in
+            // UpdateControls() is only a local snapshot of it.
+            bool connected = SerialPortOpen || Grbl.grblSimulate;
+            bool inAlarm = grblStateNow == GrblState.alarm;
+            bool isIdle = grblStateNow == GrblState.idle;
+            if (!SoftwareDatum.CanExecute(connected, isIdle, inAlarm, true))
+            {
+                MessageBox.Show(this, SoftwareDatum.RefusalReason(connected, inAlarm, true),
+                    SoftwareDatum.Title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (MessageBox.Show(this,
+                    SoftwareDatum.BuildMessage(inAlarm, isStreaming,
+                        SoftwareDatum.FormatPosition(posWork.X, posWork.Y, posWork.Z),
+                        Grbl.axisA, Grbl.isMarlin),
+                    SoftwareDatum.Title, MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
+                    MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+                return;
+
+            string cmd = SoftwareDatum.BuildCommand(Grbl.isMarlin, true, true, true, Grbl.axisA, true);
+            AddToLog(SoftwareDatum.LogSending);
+            AddToLog("  " + cmd);
+
+            if (!RequestSend(cmd))
+            {
+                AddToLog("⚠ 置零指令未能发送，坐标未改变。");
+                return;
+            }
+
+            // The firmware echoes ok and starts reporting the new WCO; on the next status report
+            // posWork is recomputed and the picture redraws. Log the outcome optimistically because
+            // a rejected offset change would surface as an 'error' line in the log right here.
+            AddToLog(SoftwareDatum.LogDone(Grbl.isMarlin));
+        }
         private void BtnGRBLReset_Click(object sender, EventArgs e)
-        { UpdateLogging(); GrblReset(true); }    // savePos
+        {
+            // AutoWriter candidate G: ask before the full soft reset (saves position, clears the
+            // modal state and streaming buffers, then sends Ctrl-X). Wrong clicks here cost a
+            // manual re-datum because this machine cannot home.
+            if (MessageBox.Show(this, ResetGuard.BuildMessage(isStreaming), ResetGuard.Title,
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+                return;
+            UpdateLogging(); GrblReset(true);   // savePos
+        }
         private void BtnGRBLHardReset_Click(object sender, EventArgs e)
         { UpdateLogging(); GrblHardReset(); }
 

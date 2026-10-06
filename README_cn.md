@@ -1,5 +1,7 @@
 # GRBL-Plotter
 
+AutoWriter 二次开发计划：[开发说明与阶段实施计划](doc/AutoWriter-二次开发说明.md)。文档包含源码接入位置、机器适配、中文笔画、排版、任务恢复和逐阶段验收要求。
+
 [![GitHub release](https://img.shields.io/github/release/svenhb/GRBL-Plotter.svg)](https://GitHub.com/svenhb/GRBL-Plotter/releases/)
 [![GitHub latest commit](https://badgen.net/github/last-commit/svenhb/GRBL-Plotter)](https://GitHub.com/svenhb/GRBL-Plotter/commit/)
 [![Github all releases](https://img.shields.io/github/downloads/svenhb/GRBL-Plotter/total.svg)](https://GitHub.com/svenhb/GRBL-Plotter/releases/)  
@@ -114,6 +116,7 @@ Linux用户请查看这个链接 由metzger100编写: [GRBL-Plotter-Linux](https
 [my XYZ platform](http://svenhb.bplaced.net/?CNC___Plotter) 
 
 ### GRBL-Plotter 切换工具（换刀/换笔）
+
 [![Import an image](https://i9.ytimg.com/vi/GGtdwYdZWi8/mq2.jpg?sqp=COypi98F&rs=AOn4CLAbkofKlCN1cepOQkGvpG6YlnRwrQ)](https://youtu.be/GGtdwYdZWi8) 
 
 ### 截图

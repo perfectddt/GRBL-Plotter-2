@@ -547,15 +547,25 @@ namespace GrblPlotter
                     AddToLog(string.Format("[Fix F0: {0}]", parserStateGC));
                 }
 
-                if (!XyzPoint.AlmostEqual(posPause, posWork))	// restore position
+                bool xyMoved = !Gcode.IsEqual(posPause.X, posWork.X) || !Gcode.IsEqual(posPause.Y, posWork.Y);
+                bool zMoved = !Gcode.IsEqual(posPause.Z, posWork.Z);
+                if (xyMoved)	// restore position
                 {
                     if (logStartStop) Logger.Trace("AlmostEqual posPause X{0:0.000} Y{1:0.000}  posWork X{2:0.000} Y{3:0.000}", posPause.X, posPause.Y, posWork.X, posWork.Y);
                     AddToLog("[Restore Position]");
-                    RequestSend(string.Format("G90 G0 X{0:0.000} Y{1:0.000}", posPause.X, posPause.Y).Replace(',', '.'));  // restore last position
                     if (logStartStop) Logger.Trace("[Restore] X{0:0.000} Y{1:0.000}  State:{2}", posPause.X, posPause.Y, parserStateGC);
-                    RequestSend("G4 P0.5");       // wait 1 second // changed from 1 to 0,5 2021-01-26
-                    RequestSend(string.Format("G0 Z{0:0.000}", posPause.Z).Replace(',', '.'));                      // restore last position
                 }
+
+                /* 2026-10-06 candidate K (R6 rerun with pen): a software pause always outlasts the
+                 * pen's spring-back (~0.5 s, machine rule: a standalone Z5 rebounds), so the physical
+                 * pen is UP while grbl still has Z=5 on its books. Re-pressing with G0 Z5 is then a
+                 * zero-length move that grbl drops - the servo never fires and the first stroke after
+                 * resume draws air (paper: top horizontal of 工4 missing right at the resume point).
+                 * The sequence itself lives in AutoWriter/ResumeRestore.cs, unit-tested offline. */
+                if (AutoWriter.ResumeRestore.IsPenDown(posPause.Z))
+                    AddToLog(string.Format("[Restore Pen Z0->Z{0:0.###} re-press]", posPause.Z));
+                foreach (string line in AutoWriter.ResumeRestore.BuildLines(xyMoved, zMoved, posPause.X, posPause.Y, posPause.Z))
+                    RequestSend(line);
 
                 AddToLog(string.Format("[Start streaming line:{0} - no echo]", streamingBuffer.GetSentLineNr()));
                 //       AddToLog("[Restore ListSettings: "+ parserStateGC+" ]");
@@ -854,11 +864,36 @@ namespace GrblPlotter
                     isStreamingRequestPause = false;
                     streamingStateNow = GrblStreaming.pause;
                     posPause = posWork;
-                    AddToLog(string.Format("[Save Settings X:{0} Y:{1}]", posPause.X, posPause.Y));
+                    /* 2026-10-06: include Z - the pen-down/pen-up settle state decides whether the
+                     * resume re-press (candidate K) fires, and without it the log is ambiguous. */
+                    AddToLog(string.Format("[Save Settings X:{0} Y:{1} Z:{2}]", posPause.X, posPause.Y, posPause.Z));
 
                     if (logStartStop) Logger.Trace("updateStreaming IDLE reached");
                     gcodeVariable["MLAX"] = posMachine.X; gcodeVariable["MLAY"] = posMachine.Y; gcodeVariable["MLAZ"] = posMachine.Z;
                     gcodeVariable["WLAX"] = posWork.X; gcodeVariable["WLAY"] = posWork.Y; gcodeVariable["WLAZ"] = posWork.Z;
+
+                    /* 2026-10-06 candidate J (R6): grbl reporting IDLE proves every line it received
+                     * has been executed and ok'd. Lines still unconfirmed were written to the OS but
+                     * never reached grbl (R6: pause at a stroke start lost the two in-flight lines -
+                     * the vertical stroke of 工5 was skipped on paper). Rewind the enqueue cursor and
+                     * drop the unconfirmed tail, so resume re-sends from the last confirmed line
+                     * instead of skipping ahead over possibly-lost lines. This is the only moment the
+                     * tail is clean: once the pause settles, oks for $G / flow-control commands get
+                     * attributed to the orphaned entries and they can no longer be told apart. */
+                    if (!isStreamingRequestStopp)
+                    {
+                        int linesToResend = streamingBuffer.IndexSent - streamingBuffer.IndexConfirmed;
+                        if (linesToResend > 0)
+                        {
+                            lock (sendDataLock)
+                            {
+                                streamingBuffer.IndexSent = streamingBuffer.IndexConfirmed;     // resume re-enqueues from here
+                                sendBuffer.RemoveUnconfirmedTail();                            // drop sent-but-unconfirmed copies
+                            }
+                            AddToLog(string.Format("[回退 {0} 行未确认指令：恢复时从 line:{1} 重发]", linesToResend, streamingBuffer.GetConfirmedLineNr()));
+                            Logger.Info("StreamingIDLE pause settle: rewind {0} unconfirmed line(s), resume from line {1}", linesToResend, streamingBuffer.GetConfirmedLineNr());
+                        }
+                    }
 
                     if (getParserState)
                     { RequestSend("$G"); }

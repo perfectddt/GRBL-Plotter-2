@@ -44,6 +44,9 @@ dlldata.c
 project.lock.json
 project.fragment.lock.json
 artifacts/
+# NuGet first-run profile files generated inside the sandbox workspace
+.nuget/NuGet/
+NuGet/
 
 *_i.c
 *_p.c
@@ -152,6 +155,7 @@ publish/
 PublishScripts/
 
 # NuGet Packages
+artifacts/
 *.nupkg
 # The packages folder can be ignored because of Package Restore
 **/packages/*

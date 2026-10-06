@@ -21,6 +21,7 @@
  80, 110
 */
 
+using GrblPlotter.AutoWriter;
 using GrblPlotter.Helper;
 using GrblPlotter.UserControls;
 using System;
@@ -217,7 +218,12 @@ namespace GrblPlotter
         private void OnRaiseCmdEvent(object sender, UserControlCmdEventArgs e)
         {
             if (string.IsNullOrEmpty(e.Command) && (e.Realtime != 0))   // send realtime command
-            { SendRealtimeCommand(e.Realtime); }
+            {
+                // AutoWriter candidate G: the flow-control panel "Reset" button only forwards the raw
+                // byte 0x18, so this is the last place that can still ask before it leaves the PC.
+                if ((e.Realtime == 0x18) && !ConfirmSoftReset(isStreaming)) return;
+                SendRealtimeCommand(e.Realtime);
+            }
             else                                                // send regular command
             {
                 if (!isStreaming || isStreamingPause)
@@ -228,6 +234,17 @@ namespace GrblPlotter
                     { }
                 }
             }
+        }
+
+        /// <summary>
+        /// AutoWriter candidate G: ask before a soft reset goes out.
+        /// A soft reset is irreversible on this machine (no homing, $H off limits), so the
+        /// default button is "No". Returns true when the operator confirmed.
+        /// </summary>
+        private bool ConfirmSoftReset(bool whileStreaming)
+        {
+            return MessageBox.Show(this, ResetGuard.BuildMessage(whileStreaming), ResetGuard.Title,
+                MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) == DialogResult.Yes;
         }
 
         private void OnRaiseGuiControlEvent(object sender, UserControlGuiControlEventArgs e)

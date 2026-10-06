@@ -69,6 +69,12 @@ namespace GrblPlotter
 
         private void GetAppDataPath()
         {   // default: System.IO.Path.GetDirectoryName(System.Windows.Forms.Application.CommonAppDataPath); 
+            if (Program.OfflineMode)
+            {
+                Datapath.AppDataFolder = Datapath.Application;
+                LogAppDataPath("Offline baseline");
+                return;
+            }
             const string reg_key_user = "HKEY_CURRENT_USER\\SOFTWARE\\GRBL-Plotter";
             const string reg_key_admin = "HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node\\GRBL-Plotter";
             const string reg_key_admin2 = "HKEY_LOCAL_MACHINE\\SOFTWARE\\GRBL-Plotter";

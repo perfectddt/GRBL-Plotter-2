@@ -84,6 +84,8 @@ namespace GrblPlotter
             this.label13 = new System.Windows.Forms.Label();
             this.btnCheckGRBL = new System.Windows.Forms.Button();
             this.btnGRBLReset = new System.Windows.Forms.Button();
+            this.btnGRBLUnlock = new System.Windows.Forms.Button();
+            this.btnGRBLDatum = new System.Windows.Forms.Button();
             this.btnGRBLHardReset = new System.Windows.Forms.Button();
             this.btnGRBLCmndParser = new System.Windows.Forms.Button();
             this.btnGRBLCmndBuild = new System.Windows.Forms.Button();
@@ -345,6 +347,22 @@ namespace GrblPlotter
             this.toolTipSerial.SetToolTip(this.btnGRBLReset, resources.GetString("btnGRBLReset.ToolTip"));
             this.btnGRBLReset.UseVisualStyleBackColor = true;
             this.btnGRBLReset.Click += new System.EventHandler(this.BtnGRBLReset_Click);
+            //
+            // btnGRBLUnlock
+            //
+            resources.ApplyResources(this.btnGRBLUnlock, "btnGRBLUnlock");
+            this.btnGRBLUnlock.Name = "btnGRBLUnlock";
+            this.toolTipSerial.SetToolTip(this.btnGRBLUnlock, resources.GetString("btnGRBLUnlock.ToolTip"));
+            this.btnGRBLUnlock.UseVisualStyleBackColor = true;
+            this.btnGRBLUnlock.Click += new System.EventHandler(this.BtnGRBLUnlock_Click);
+            // 
+            // btnGRBLDatum
+            // 
+            resources.ApplyResources(this.btnGRBLDatum, "btnGRBLDatum");
+            this.btnGRBLDatum.Name = "btnGRBLDatum";
+            this.toolTipSerial.SetToolTip(this.btnGRBLDatum, resources.GetString("btnGRBLDatum.ToolTip"));
+            this.btnGRBLDatum.UseVisualStyleBackColor = true;
+            this.btnGRBLDatum.Click += new System.EventHandler(this.BtnGRBLDatum_Click);
             // 
             // btnGRBLHardReset
             // 
@@ -392,7 +410,7 @@ namespace GrblPlotter
             // 
             // cBCommand
             // 
-            this.tableLayoutPanel1.SetColumnSpan(this.cBCommand, 6);
+            this.tableLayoutPanel1.SetColumnSpan(this.cBCommand, 8);
             resources.ApplyResources(this.cBCommand, "cBCommand");
             this.cBCommand.FormattingEnabled = true;
             this.cBCommand.Items.AddRange(new object[] {
@@ -406,7 +424,7 @@ namespace GrblPlotter
             // 
             // groupBox1
             // 
-            this.tableLayoutPanel1.SetColumnSpan(this.groupBox1, 9);
+            this.tableLayoutPanel1.SetColumnSpan(this.groupBox1, 11);
             this.groupBox1.Controls.Add(this.cBStatus1);
             this.groupBox1.Controls.Add(this.btnCheckGRBLResult);
             this.groupBox1.Controls.Add(this.CbEthernetUse);
@@ -473,7 +491,7 @@ namespace GrblPlotter
             // 
             // rtbLog
             // 
-            this.tableLayoutPanel1.SetColumnSpan(this.rtbLog, 9);
+            this.tableLayoutPanel1.SetColumnSpan(this.rtbLog, 11);
             this.rtbLog.ContextMenuStrip = this.contextMenuStrip1;
             resources.ApplyResources(this.rtbLog, "rtbLog");
             this.rtbLog.Name = "rtbLog";
@@ -489,19 +507,21 @@ namespace GrblPlotter
             this.tableLayoutPanel1.Controls.Add(this.btnGRBLCommand2, 2, 5);
             this.tableLayoutPanel1.Controls.Add(this.btnGRBLCmndParser, 3, 5);
             this.tableLayoutPanel1.Controls.Add(this.btnGRBLCmndBuild, 4, 5);
-            this.tableLayoutPanel1.Controls.Add(this.btnGRBLHardReset, 8, 5);
             this.tableLayoutPanel1.Controls.Add(this.cBCommand, 2, 4);
             this.tableLayoutPanel1.Controls.Add(this.btnGRBLCommand3, 5, 5);
-            this.tableLayoutPanel1.Controls.Add(this.btnSend, 8, 4);
+            this.tableLayoutPanel1.Controls.Add(this.btnSend, 10, 4);
             this.tableLayoutPanel1.Controls.Add(this.btnGRBLCommand4, 6, 5);
             this.tableLayoutPanel1.Controls.Add(this.btnClear, 0, 4);
             this.tableLayoutPanel1.Controls.Add(this.btnGRBLReset, 7, 5);
+            this.tableLayoutPanel1.Controls.Add(this.btnGRBLUnlock, 8, 5);
+            this.tableLayoutPanel1.Controls.Add(this.btnGRBLDatum, 9, 5);
+            this.tableLayoutPanel1.Controls.Add(this.btnGRBLHardReset, 10, 5);
             this.tableLayoutPanel1.Controls.Add(this.rtbLog, 0, 3);
             this.tableLayoutPanel1.Name = "tableLayoutPanel1";
             // 
             // PanelEthernet
             // 
-            this.tableLayoutPanel1.SetColumnSpan(this.PanelEthernet, 9);
+            this.tableLayoutPanel1.SetColumnSpan(this.PanelEthernet, 11);
             this.PanelEthernet.Controls.Add(this.tableLayoutPanel3);
             resources.ApplyResources(this.PanelEthernet, "PanelEthernet");
             this.PanelEthernet.Name = "PanelEthernet";
@@ -517,7 +537,7 @@ namespace GrblPlotter
             // 
             // PanelSeriell
             // 
-            this.tableLayoutPanel1.SetColumnSpan(this.PanelSeriell, 9);
+            this.tableLayoutPanel1.SetColumnSpan(this.PanelSeriell, 11);
             this.PanelSeriell.Controls.Add(this.tableLayoutPanel2);
             resources.ApplyResources(this.PanelSeriell, "PanelSeriell");
             this.PanelSeriell.Name = "PanelSeriell";
@@ -575,6 +595,8 @@ namespace GrblPlotter
 //        private System.Windows.Forms.Timer timerSerial;
         private System.Windows.Forms.Button btnGRBLCommand4;
         private System.Windows.Forms.Button btnGRBLReset;
+        private System.Windows.Forms.Button btnGRBLUnlock;
+        private System.Windows.Forms.Button btnGRBLDatum;
         private System.Windows.Forms.Label lblSrState;
         private System.Windows.Forms.Label lblSrPos;
         private System.Windows.Forms.ComboBox cBCommand;

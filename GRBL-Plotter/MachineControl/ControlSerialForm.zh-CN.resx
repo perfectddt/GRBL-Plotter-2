@@ -380,4 +380,34 @@ M =冷却液</value>
   <data name="cBCommand.Items" xml:space="preserve">
     <value>$H (Homing)</value>
   </data>
+  <data name="btnGRBLUnlock.Text" xml:space="preserve">
+    <value>解锁</value>
+  </data>
+  <data name="btnGRBLUnlock.ToolTip" xml:space="preserve">
+    <value>解除报警锁，并自动重新读取设置</value>
+  </data>
+  <data name="&gt;&gt;btnGRBLUnlock.Name" xml:space="preserve">
+    <value>btnGRBLUnlock</value>
+  </data>
+  <data name="&gt;&gt;btnGRBLUnlock.Type" xml:space="preserve">
+    <value>System.Windows.Forms.Button, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </data>
+  <data name="&gt;&gt;btnGRBLUnlock.Parent" xml:space="preserve">
+    <value>tableLayoutPanel1</value>
+  </data>
+  <data name="btnGRBLDatum.Text" xml:space="preserve">
+    <value>置零</value>
+  </data>
+  <data name="btnGRBLDatum.ToolTip" xml:space="preserve">
+    <value>把当前位置设为工件原点（软件置零，不回零、不动电机）</value>
+  </data>
+  <data name="&gt;&gt;btnGRBLDatum.Name" xml:space="preserve">
+    <value>btnGRBLDatum</value>
+  </data>
+  <data name="&gt;&gt;btnGRBLDatum.Type" xml:space="preserve">
+    <value>System.Windows.Forms.Button, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </data>
+  <data name="&gt;&gt;btnGRBLDatum.Parent" xml:space="preserve">
+    <value>tableLayoutPanel1</value>
+  </data>
 </root>

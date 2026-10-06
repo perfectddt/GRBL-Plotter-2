@@ -3805,13 +3805,49 @@ namespace GrblPlotter.Properties {
         
         [global::System.Configuration.UserScopedSettingAttribute()]
         [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
-        [global::System.Configuration.DefaultSettingValueAttribute("False")]
+        [global::System.Configuration.DefaultSettingValueAttribute("True")]
         public bool gui2DPenUpShow {
             get {
                 return ((bool)(this["gui2DPenUpShow"]));
             }
             set {
                 this["gui2DPenUpShow"] = value;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("True")]
+        public bool gui2DPenZEnable {
+            get {
+                return ((bool)(this["gui2DPenZEnable"]));
+            }
+            set {
+                this["gui2DPenZEnable"] = value;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("0")]
+        public double gui2DPenZUpValue {
+            get {
+                return ((double)(this["gui2DPenZUpValue"]));
+            }
+            set {
+                this["gui2DPenZUpValue"] = value;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("5")]
+        public double gui2DPenZDownValue {
+            get {
+                return ((double)(this["gui2DPenZDownValue"]));
+            }
+            set {
+                this["gui2DPenZDownValue"] = value;
             }
         }
         

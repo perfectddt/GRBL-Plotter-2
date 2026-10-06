@@ -50,6 +50,11 @@ namespace GrblPlotter
         { ConnectToGrbl(null, null); }
         public void ConnectToGrbl(object sender, EventArgs e)//, bool showMessageBox = true)
         {
+            if (Program.OfflineMode)
+            {
+                AddToLog("Offline baseline: controller connection disabled");
+                return;
+            }
             bool showMessageBox = false;	//true;
             rxErrorCount = 0;
             tryDoSerialConnection = true;
@@ -228,7 +233,10 @@ namespace GrblPlotter
                 Grbl.grblSimulate = false;
                 AddToLog("* Stop simulation\r\n");
             }
-            GrblReset(false);           // reset controller, don't savePos, wait for reset response
+            if (!Program.MachineInspectionMode)
+                GrblReset(false);           // reset controller, don't savePos, wait for reset response
+            else
+                AddToLog("AutoWriter inspection: connected without automatic reset; motion and setting writes blocked.");
 
             OnRaisePosEvent(new PosEventArgs(posWork, posMachine, GrblState.unknown, machineState, mParserState, ""));// lastCmd));					
         }
