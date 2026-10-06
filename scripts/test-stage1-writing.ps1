@@ -5,7 +5,9 @@ $sourceFiles = @(
     (Join-Path $repoRoot 'GRBL-Plotter\AutoWriter\Models\MachineProfile.cs'),
     (Join-Path $repoRoot 'GRBL-Plotter\AutoWriter\Models\WritingStroke.cs'),
     (Join-Path $repoRoot 'GRBL-Plotter\AutoWriter\Services\WritingProgramService.cs'),
-    (Join-Path $repoRoot 'GRBL-Plotter\AutoWriter\Services\MachineProfileApplier.cs')
+    (Join-Path $repoRoot 'GRBL-Plotter\AutoWriter\Services\MachineProfileApplier.cs'),
+    (Join-Path $repoRoot 'GRBL-Plotter\AutoWriter\Services\BuiltinGlyphLibrary.cs'),
+    (Join-Path $repoRoot 'GRBL-Plotter\AutoWriter\Services\TextLayoutService.cs')
 )
 foreach ($sourceFile in $sourceFiles) {
     if (-not (Test-Path -LiteralPath $sourceFile)) { throw "Missing source file: $sourceFile" }
@@ -392,5 +394,78 @@ Assert-Contains $flipAlignProgram 'G1 X5 Y0 F1000' 'the mirrored aligned shape k
 $rawOptions = New-Options $true
 $rawProgram = [GrblPlotter.AutoWriter.Services.WritingProgramService]::Generate($continuous, (New-GongStrokes), $rawOptions)
 Assert-True ($rawProgram -eq $program) 'leaving the option off reproduces the raw design coordinates exactly'
+
+# 13) Multi-character layout (stage 2, multi-char): a string becomes ONE stroke set that the
+#     generator turns into ONE continuous program. The built-in glyphs live on a shared 12 mm
+#     em box, so baseline alignment holds by construction; letter/line spacing shift the cursor.
+#     (Chinese literals are built from code points: PS 5.1 reads this file as ANSI.)
+$gong = [string][char]0x5DE5   # gong
+$wang = [string][char]0x738B   # wang
+$yi   = [string][char]0x4E00   # yi
+$hao  = [string][char]0x597D   # an unknown glyph
+$resolve = [Func[char, GrblPlotter.AutoWriter.Services.BuiltinGlyph]]{ param($c) [GrblPlotter.AutoWriter.Services.BuiltinGlyphLibrary]::Resolve($c) }
+$lineH = [GrblPlotter.AutoWriter.Services.BuiltinGlyphLibrary]::LineHeightMm
+
+$layoutGong2 = [GrblPlotter.AutoWriter.Services.TextLayoutService]::Layout($gong + $gong, $resolve, 2.0, 4.0, $lineH)
+Assert-True ($layoutGong2.Count -eq 6) 'two gong glyphs produce 2x3 strokes'
+# First glyph untouched, second glyph translated by advance(12) + letterSpacing(2) = 14.
+Assert-True (($layoutGong2[0].Points[0].X -eq 1.0) -and ($layoutGong2[0].Points[0].Y -eq 11.0)) 'first glyph keeps its em-box origin'
+Assert-True (($layoutGong2[3].Points[0].X -eq 15.0) -and ($layoutGong2[3].Points[0].Y -eq 11.0)) 'second glyph translated by advance + letter spacing'
+Assert-True (($layoutGong2[3].Points[0].Y -eq $layoutGong2[0].Points[0].Y) -and ($layoutGong2[4].Points[1].Y -eq $layoutGong2[1].Points[1].Y)) 'same-line glyphs share the baseline'
+
+# A space is a stroke-less advance: gong, space, gong = 6 strokes, next glyph at 12+2+6+2 = 22.
+$layoutSpace = [GrblPlotter.AutoWriter.Services.TextLayoutService]::Layout(($gong + ' ' + $gong), $resolve, 2.0, 4.0, $lineH)
+Assert-True ($layoutSpace.Count -eq 6) 'space adds no strokes'
+Assert-True (($layoutSpace[3].Points[0].X -eq 23.0) -and ($layoutSpace[3].Points[0].Y -eq 11.0)) 'space advances the cursor without ink'
+
+# Newline: cursor back to X0 and down by lineHeight(14) + lineSpacing(4) = 18.
+$layoutLines = [GrblPlotter.AutoWriter.Services.TextLayoutService]::Layout(($gong + "`n" + $wang), $resolve, 2.0, 4.0, $lineH)
+Assert-True ($layoutLines.Count -eq 7) 'gong + wang produce 3+4 strokes'
+Assert-True (($layoutLines[3].Points[0].X -eq 1.0) -and ($layoutLines[3].Points[0].Y -eq -7.0)) 'second line starts at X0, one line height + spacing down'
+
+# Loud rejections: unknown character, empty text, stroke-less text, negative spacing.
+Assert-Throws { [GrblPlotter.AutoWriter.Services.TextLayoutService]::Layout($hao, $resolve, 2.0, 4.0, 14.0) } 'unknown glyph is rejected, never dropped'
+Assert-Throws { [GrblPlotter.AutoWriter.Services.TextLayoutService]::Layout('', $resolve, 2.0, 4.0, 14.0) } 'empty text is rejected'
+Assert-Throws { [GrblPlotter.AutoWriter.Services.TextLayoutService]::Layout('   ', $resolve, 2.0, 4.0, 14.0) } 'spaces-only text is rejected'
+Assert-Throws { [GrblPlotter.AutoWriter.Services.TextLayoutService]::Layout($gong, $resolve, -1.0, 4.0, 14.0) } 'negative letter spacing is rejected'
+Assert-Throws { [GrblPlotter.AutoWriter.Services.TextLayoutService]::Layout($gong, $resolve, 2.0, -4.0, 14.0) } 'negative line spacing is rejected'
+
+# The laid-out strokes feed the generator directly: one program, both glyphs present, the
+# continuous-queue invariant holds across the glyph boundary (travel -> pen-down -> draw).
+$multiProgram = [GrblPlotter.AutoWriter.Services.WritingProgramService]::Generate($continuous, $layoutGong2, (New-Options $true))
+Assert-Contains $multiProgram 'G1 X1 Y11 F2000' 'multi-char: first glyph travel'
+Assert-Contains $multiProgram 'G1 X15 Y11 F2000' 'multi-char: second glyph travel'
+Assert-True (@([GrblPlotter.AutoWriter.Services.WritingProgramService]::FindContinuousViolations($multiProgram, 5.0)).Count -eq 0) 'multi-char program keeps the continuous queue invariant'
+
+# Glyph library sanity: the resolver serves the advertised set and documents it for the UI.
+Assert-True ([GrblPlotter.AutoWriter.Services.BuiltinGlyphLibrary]::AvailableSymbols.Length -gt 0) 'available glyphs are documented'
+Assert-True (([GrblPlotter.AutoWriter.Services.BuiltinGlyphLibrary]::Resolve([char]0x738B).Strokes.Count) -eq 4) 'wang has four strokes'
+Assert-True (([GrblPlotter.AutoWriter.Services.BuiltinGlyphLibrary]::Resolve([char]0x4E00).Strokes.Count) -eq 1) 'yi has one stroke'
+Assert-True (([GrblPlotter.AutoWriter.Services.BuiltinGlyphLibrary]::Resolve(' ').Strokes.Count) -eq 0) 'space has no strokes'
+
+# 14) Font size (stage 2, glyph scale): every point, the advance and the line height scale about
+#     the glyph's own em box; the operator's spacings stay absolute. scale 0.5 = 5 mm body.
+$halfScale = [GrblPlotter.AutoWriter.Services.TextLayoutService]::Layout($gong + $gong, $resolve, 2.0, 4.0, $lineH, 0.5)
+Assert-True ($halfScale.Count -eq 6) 'scaled layout keeps the stroke count'
+Assert-True (($halfScale[0].Points[0].X -eq 0.5) -and ($halfScale[0].Points[0].Y -eq 5.5)) 'scale 0.5: first point halved about the em origin'
+# Bounding-box height of the scaled glyph = 10 * 0.5 = 5 mm (size semantics: body height).
+$halfY = @(); foreach ($s in $halfScale) { foreach ($p in $s.Points) { $halfY += $p.Y } }
+$halfSpan = ($halfY | Measure-Object -Maximum).Maximum - ($halfY | Measure-Object -Minimum).Minimum
+Assert-True ($halfSpan -eq 5.0) 'scale 0.5 gives a 5 mm body height'
+# Advance scales too: second glyph at 12*0.5 + 2 = 8, letter spacing untouched.
+Assert-True (($halfScale[3].Points[0].X -eq 8.5) -and ($halfScale[3].Points[0].Y -eq 5.5)) 'scale shrinks the advance, not the letter spacing'
+# Line height scales, line spacing stays absolute: second line at -(14*0.5 + 4) = -11.
+$halfLines = [GrblPlotter.AutoWriter.Services.TextLayoutService]::Layout(($gong + "`n" + $gong), $resolve, 2.0, 4.0, $lineH, 0.5)
+Assert-True (($halfLines[3].Points[0].X -eq 0.5) -and ($halfLines[3].Points[0].Y -eq -5.5)) 'scale shrinks the line height, not the line spacing'
+# Loud rejections: zero / negative / NaN scale.
+Assert-Throws { [GrblPlotter.AutoWriter.Services.TextLayoutService]::Layout($gong, $resolve, 2.0, 4.0, 14.0, 0.0) } 'zero scale is rejected'
+Assert-Throws { [GrblPlotter.AutoWriter.Services.TextLayoutService]::Layout($gong, $resolve, 2.0, 4.0, 14.0, -0.5) } 'negative scale is rejected'
+Assert-Throws { [GrblPlotter.AutoWriter.Services.TextLayoutService]::Layout($gong, $resolve, 2.0, 4.0, 14.0, [double]::NaN) } 'NaN scale is rejected'
+# Scale 1.0 via the new overload reproduces the unscaled layout exactly (regression anchor).
+Assert-True (($halfScale.Count -eq $layoutGong2.Count) -and ($layoutGong2[0].Points[0].X -eq 1.0)) 'scale 1.0 baseline remains the unscaled layout'
+# A scaled program still satisfies the continuous-queue invariant end to end.
+$scaledProgram = [GrblPlotter.AutoWriter.Services.WritingProgramService]::Generate($continuous, $halfScale, (New-Options $true))
+Assert-Contains $scaledProgram 'G1 X0.5 Y5.5 F2000' 'scaled program carries the scaled coordinates'
+Assert-True (@([GrblPlotter.AutoWriter.Services.WritingProgramService]::FindContinuousViolations($scaledProgram, 5.0)).Count -eq 0) 'scaled program keeps the continuous queue invariant'
 
 Write-Host ('PASS: stage1 writing program and apply report validated. Temporary artifacts: ' + $tempRoot)

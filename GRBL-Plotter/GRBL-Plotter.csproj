@@ -498,6 +498,8 @@
     <Compile Include="AutoWriter\Services\MachineProfileApplier.cs" />
     <Compile Include="AutoWriter\Services\MachineProfileService.cs" />
     <Compile Include="AutoWriter\Services\MotionCalibrationService.cs" />
+    <Compile Include="AutoWriter\Services\BuiltinGlyphLibrary.cs" />
+    <Compile Include="AutoWriter\Services\TextLayoutService.cs" />
     <Compile Include="AutoWriter\Services\WritingProgramService.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />

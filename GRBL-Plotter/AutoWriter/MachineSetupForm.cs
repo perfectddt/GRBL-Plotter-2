@@ -30,6 +30,13 @@ namespace GrblPlotter.AutoWriter
         // controls where the character lands by positioning the sheet. Checked by default because
         // the built-in geometry carries its own margin and would otherwise start 1 mm inside.
         private CheckBox startAtOrigin;
+        // Multi-character input (stage 2, §11.2-1): one string -> one continuous program.
+        // Empty falls back to the built-in sample strokes so the old checks keep working.
+        private TextBox writingInputText;
+        private TextBox letterSpacingInput;
+        private TextBox lineSpacingInput;
+        // Font size = glyph body height in mm; empty keeps the native 10 mm body (scale 1.0).
+        private TextBox fontSizeInput;
         // Optional sink that loads a generated writing program into the main G-code editor so the
         // existing preview / simulation / send pipeline can be used. Null in an unconnected shell.
         private readonly Action<string> loadIntoPreview;
@@ -103,6 +110,20 @@ namespace GrblPlotter.AutoWriter
             applyButtons.Controls.Add(parkY);
             startAtOrigin = new CheckBox { Text = "起笔点=原点（第一个落笔点 X0 Y0）", Checked = true, AutoSize = true };
             applyButtons.Controls.Add(startAtOrigin);
+            // Multi-character row: text + letter/line spacing feed TextLayoutService; an empty text
+            // keeps the historical single-工 sample so existing checks and habits still work.
+            applyButtons.Controls.Add(new Label { Text = "文本（可用：" + BuiltinGlyphLibrary.AvailableSymbols + "）", AutoSize = true });
+            writingInputText = new TextBox { Text = "", Width = 110 };
+            applyButtons.Controls.Add(writingInputText);
+            applyButtons.Controls.Add(new Label { Text = "字距mm", AutoSize = true });
+            letterSpacingInput = new TextBox { Text = "2", Width = 40 };
+            applyButtons.Controls.Add(letterSpacingInput);
+            applyButtons.Controls.Add(new Label { Text = "行距mm", AutoSize = true });
+            lineSpacingInput = new TextBox { Text = "4", Width = 40 };
+            applyButtons.Controls.Add(lineSpacingInput);
+            applyButtons.Controls.Add(new Label { Text = "字号mm(字身高)", AutoSize = true });
+            fontSizeInput = new TextBox { Text = "10", Width = 40 };
+            applyButtons.Controls.Add(fontSizeInput);
             applyText = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, WordWrap = false };
             writingText = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = false };
             var applySplit = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal };
@@ -273,9 +294,33 @@ namespace GrblPlotter.AutoWriter
             return value;
         }
 
+        // Strokes for the writing preview/export/load path: the operator's text laid out by
+        // TextLayoutService, or the historical single-工 sample when the text box is empty.
+        private IList<WritingStroke> BuildWritingStrokes()
+        {
+            string text = writingInputText == null ? "" : writingInputText.Text;
+            if (string.IsNullOrWhiteSpace(text))
+                return SampleStrokes();
+            double sizeMm = LayoutValue(fontSizeInput, "字号");
+            if (sizeMm <= 0)
+                throw new ArgumentException("字号必须大于 0（字身高度 mm，小数点使用 . ）：" + fontSizeInput.Text);
+            return TextLayoutService.Layout(text, BuiltinGlyphLibrary.Resolve,
+                LayoutValue(letterSpacingInput, "字距"), LayoutValue(lineSpacingInput, "行距"),
+                BuiltinGlyphLibrary.LineHeightMm, sizeMm / BuiltinGlyphLibrary.BodySizeMm);
+        }
+
+        private static double LayoutValue(TextBox box, string name)
+        {
+            string text = box == null ? "" : box.Text.Trim();
+            double value;
+            if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value))
+                throw new ArgumentException(name + " 不是有效数值（小数点使用 . ）：" + text);
+            return value;
+        }
+
         private void GenerateWritingPreview()
         {
-            Execute(() => { writingText.Text = WritingProgramService.Generate(profile, SampleStrokes(), BuildWritingOptions()); });
+            Execute(() => { writingText.Text = WritingProgramService.Generate(profile, BuildWritingStrokes(), BuildWritingOptions()); });
         }
 
         private void CheckContinuousQueue()
@@ -312,7 +357,7 @@ namespace GrblPlotter.AutoWriter
             {
                 // Always regenerate: the button says "generate and load", and the overrides, the end
                 // park and the profile may all have changed since the last preview was produced.
-                writingText.Text = WritingProgramService.Generate(profile, SampleStrokes(), BuildWritingOptions());
+                writingText.Text = WritingProgramService.Generate(profile, BuildWritingStrokes(), BuildWritingOptions());
 
                 // Keep the 2D view's pen up/down detection in step with the profile that produced this
                 // program: the generator writes the profile's pen Z values (0 = up, 5 = down here) and

@@ -224,6 +224,8 @@ Debug已有旧项目警告，不必为无关警告扩大本阶段改动。环境
 
 ## 11. 待办（阶段 1 封档后，2026-10-06 09:25）
 
+> **进度（2026-10-06 下午）**：§11.1 候选 **A/B/C/D/E/F/I 全部实现**（提交 `b0ab2f68`；E 经用户批准采用「限流 N=4 + `!`」折中——近乎立停，恢复残余 ≤4 短笔 ≤2cm 缺墨风险）。§11.2 三项**开发侧全部完成**（多字排版 `TextLayoutService` + 字形库 `BuiltinGlyphLibrary`（工/王/一/空格）、字号 `glyphScale`、端到端样本 `artifacts/stage2/stage2-writing-sample-6mm.nc`，10 套件全 PASS，Debug+Release 已重建）。**待用户实机**：① §11.1 全套行为的暂停/恢复实测（重点：C 的边界停日志 `[Pause: drain N line(s) to stroke boundary]`、E 的 `[Feed hold !]`/`[Release hold ~]`、B 的新恢复序列）；② §11.2-3 样本程序的纸面验收；③ §11.3 装机观察（R5、R6 Case A）。
+
 阶段 1（暂停 / 恢复 / 终止）核心链路已闭环：R1–R4 + R6/K（日志+纸面）通过，G/H/I-a/J/K 全部实现；Debug 与 Release 均于 09:09 重建。**以下均为增强、非缺陷**，是否实现由用户决定。
 
 ### 11.1 暂停 / 恢复 / 终止 — 增强候选
