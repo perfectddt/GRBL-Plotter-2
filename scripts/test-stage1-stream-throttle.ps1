@@ -136,10 +136,14 @@ Assert-False ([bool]$isMotion.Invoke($null, @('G4 P0.5')))        'dwell allowed
 Assert-False ([bool]$isMotion.Invoke($null, @('G90')))            'mode word allowed'
 Assert-False ([bool]$isMotion.Invoke($null, @('')))               'empty allowed'
 
-# ---- PauseMoveGuard.ShouldBlock: only while the pause has settled. ----
-Assert-True  ([bool]$shouldBlk.Invoke($null, @($true, 'G0 X5')))   'block: paused + motion'
-Assert-False ([bool]$shouldBlk.Invoke($null, @($false, 'G0 X5')))  'allow: not paused'
-Assert-False ([bool]$shouldBlk.Invoke($null, @($true, '$G')))      'allow: paused + query'
+# ---- PauseMoveGuard.ShouldBlock: while the pause has settled OR the controller holds. ----
+Assert-True  ([bool]$shouldBlk.Invoke($null, @($true, $false, 'G0 X5')))  'block: paused + motion'
+Assert-True  ([bool]$shouldBlk.Invoke($null, @($false, $true, 'G0 X5')))  'block: HOLD + motion (13:40 wedge case)'
+Assert-True  ([bool]$shouldBlk.Invoke($null, @($false, $true, 'G91 G0 X5'))) 'block: HOLD + the exact R6-style jog'
+Assert-False ([bool]$shouldBlk.Invoke($null, @($false, $false, 'G0 X5'))) 'allow: idle, not holding'
+Assert-False ([bool]$shouldBlk.Invoke($null, @($true, $false, '$G')))     'allow: paused + query'
+Assert-False ([bool]$shouldBlk.Invoke($null, @($false, $true, '$X')))     'allow: HOLD + unlock (escape hatch)'
+Assert-False ([bool]$shouldBlk.Invoke($null, @($false, $true, 'M5')))     'allow: HOLD + M-code'
 Assert-True  (($refusal.GetValue($null)).Length -gt 10)            'refusal message non-empty'
 
 # ---- StrokeBoundary (candidate C). ----
@@ -172,7 +176,11 @@ Assert-True ($streamingCode.Contains('StreamThrottle.OkToSendMore(streamingBuffe
 Assert-True ($streamingCode.Contains("[Feed hold ! - stop immediately]")) 'wiring: pause logs feed hold'
 Assert-True ($streamingCode.Contains("[Release hold ~ - resume motion]")) 'wiring: resume releases hold'
 Assert-True ($streamingCode.Contains("[Stop: feed hold ! - halt immediately]")) 'wiring: stop logs feed hold'
-Assert-True ($streamingCode.Contains("[Stop: release ~ - residual queued lines run out]")) 'wiring: stop releases hold'
+Assert-True ($streamingCode.Contains("[Stop: wait for HOLD report, then release ~]")) 'wiring F-fix: stop defers the release'
+Assert-True ($streamingCode.Contains("pendingStopHoldRelease = true")) 'wiring F-fix: release flag armed after StopStreamingFinal'
+Assert-True ($interfaceCode.Contains("(grblStateNow == GrblState.hold) && pendingStopHoldRelease")) 'wiring F-fix: release fires on the HOLD report'
+Assert-True ($streamingCode.Contains("[Start refused: controller in HOLD")) 'wiring: StartStreaming refuses HOLD'
+Assert-True ($streamingCode.Contains("grblStateNow == GrblState.hold) && !isStreamingPause")) 'wiring: HOLD refusal keeps the pause-resume path exempt'
 Assert-True ($streamingCode.Contains("RealtimeCommand((byte)'!')")) 'wiring: feed hold byte sent'
 Assert-True ($streamingCode.Contains("RealtimeCommand((byte)'~')")) 'wiring: cycle start byte sent'
 Assert-True ($interfaceCode.Contains('StreamThrottle.ShouldSettleOnHold')) 'wiring: HOLD settle branch in ProcessGrblStateChange'
@@ -183,9 +191,9 @@ Assert-True ($streamingCode.Contains('[Auto pen-up Z0]')) 'wiring A: auto pen-up
 Assert-True ($streamingCode.Contains('RequestSend("G90 G1 Z0 F10000")')) 'wiring A: pen-up line sent'
 Assert-True ($streamingCode.Contains('AutoWriter.ResumeRestore.IsPenDown(posPause.Z)')) 'wiring A: gated on pen down at settle'
 
-# candidate D wiring: COM CNC manual command box consults the guard
+# candidate D wiring: COM CNC manual command box consults the guard (pause + HOLD)
 $serialFormCode = [IO.File]::ReadAllText((Join-Path $repoRoot 'GRBL-Plotter\MachineControl\ControlSerialForm.cs'))
-Assert-True ($serialFormCode.Contains('AutoWriter.PauseMoveGuard.ShouldBlock(isStreamingPause, cmd)')) 'wiring D: SendCommand consults guard'
+Assert-True ($serialFormCode.Contains('AutoWriter.PauseMoveGuard.ShouldBlock(isStreamingPause, grblStateNow == GrblState.hold, cmd)')) 'wiring D: SendCommand consults guard with HOLD'
 Assert-True ($serialFormCode.Contains('AutoWriter.PauseMoveGuard.RefusalMessage')) 'wiring D: refusal logged'
 
 # candidate C wiring: boundary scan before feed-hold, drain allowance in the send loop

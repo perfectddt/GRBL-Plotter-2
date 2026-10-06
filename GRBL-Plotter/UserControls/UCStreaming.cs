@@ -67,6 +67,33 @@ namespace GrblPlotter.UserControls
 
             EnableButtonsStreaming(false);
             EnableButtonsSimulation(false);
+            SetStreamingToolTips();
+        }
+
+        /* 2026-10-06 AutoWriter: hover help that distinguishes our customized start/pause/stop
+         * semantics (stroke-boundary pause, auto pen lift, pen re-press on resume). The texts
+         * live here - not in the resx - so they stay next to the logic they describe. */
+        private const string TipStreamStartPlay =
+            "开始 / 恢复发送\r\n" +
+            "左键：从头开始；暂停后点此 = 恢复续画（自动抬笔回暂停点、重新压笔、从断行继续）\r\n" +
+            "右键：选择起始行";
+        private const string TipStreamStartPause =
+            "暂停发送（位置不丢，可续画）\r\n" +
+            "· 短笔画：自动排到笔画边界停稳（约几秒，零缺墨）\r\n" +
+            "· 长笔画：立即进料保持立停\r\n" +
+            "停稳后自动抬笔并记住位置；再点此键恢复";
+        private const string TipStreamStop =
+            "停止发送（不可续画）\r\n" +
+            "立即停住机器并结束本次发送，缓冲中残余几行会跑完后回待机\r\n" +
+            "想继续只能重新发送（右键 ▶ 可选起始行）";
+
+        private void SetStreamingToolTips()
+        {
+            toolTip1.AutoPopDelay = 20000;      // long texts need more than the 5 s default
+            toolTip1.InitialDelay = 400;
+            toolTip1.ReshowDelay = 200;
+            toolTip1.SetToolTip(btnStreamStart, TipStreamStartPlay);
+            toolTip1.SetToolTip(btnStreamStop, TipStreamStop);
         }
 		
         private void UCStreaming_Load(object sender, EventArgs e)
@@ -149,9 +176,15 @@ namespace GrblPlotter.UserControls
         internal void SetStatusStreamStart(bool showPlay, bool highlight, bool blink)
         {
             if (showPlay)
+            {
                 btnStreamStart.Image = Properties.Resources.btn_play;
+                toolTip1.SetToolTip(btnStreamStart, TipStreamStartPlay);
+            }
             else
+            {
                 btnStreamStart.Image = Properties.Resources.btn_pause;
+                toolTip1.SetToolTip(btnStreamStart, TipStreamStartPause);
+            }
             enableHighlightPlay = blink;
             if (highlight)
                 btnStreamStart.BackColor = MyControl.NotifyYellow;

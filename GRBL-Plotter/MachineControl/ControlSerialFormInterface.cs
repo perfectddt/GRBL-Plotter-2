@@ -644,6 +644,17 @@ namespace GrblPlotter
                         ReadSettings();
                     }
                 }
+                /* 2026-10-06 candidate F follow-up: the stop-time '!' reaches Hold:0 only after
+                 * deceleration; release it here, on the HOLD report, never inline - this firmware
+                 * drops a '~' that arrives before Hold:0 (13:40 wedge: stop one second after a
+                 * resume left the controller in HOLD and the next start froze at 0%). Runs
+                 * independently of isStreaming: StopStreamingFinal has already cleared it. */
+                else if ((grblStateNow == GrblState.hold) && pendingStopHoldRelease)
+                {
+                    pendingStopHoldRelease = false;
+                    AddToLog("[Stop: release ~ - residual queued lines run out]");
+                    RealtimeCommand((byte)'~');
+                }
                 /* 2026-10-06 candidate E/F: after the pause/stop feed-hold '!', the controller
                  * reports HOLD and never reaches IDLE by itself. Settle the software pause on
                  * HOLD exactly once (position save, candidate-J rewind, $G, flow-control code),

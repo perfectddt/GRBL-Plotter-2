@@ -192,6 +192,7 @@ namespace GrblPlotter
             Set2ndSerial(handle2);
             Set3rdSerial(handle3);
             InitializeComponent();
+            SetSerialFormToolTips();
             mParserState.Reset();
             CultureInfo ci = new CultureInfo(Properties.Settings.Default.guiLanguage);
             Thread.CurrentThread.CurrentCulture = ci;
@@ -201,6 +202,28 @@ namespace GrblPlotter
 
             timerSerial.Elapsed += TimerSerial_Tick;
             timerSerial.Interval = 1000;
+        }
+        /* 2026-10-06 AutoWriter: Chinese hover help for the customized buttons (overrides the
+         * English resx tooltips). Kept in code so the text stays next to the click handlers. */
+        private void SetSerialFormToolTips()
+        {
+            toolTipSerial.AutoPopDelay = 20000;
+            toolTipSerial.InitialDelay = 400;
+            toolTipSerial.ReshowDelay = 200;
+            toolTipSerial.SetToolTip(btnGRBLUnlock,
+                "解锁（$X + 清发送队列）\r\n" +
+                "报警锁定后点此解锁，回待机后自动重读设置\r\n" +
+                "注意：解锁 ≠ 位置已知，限位报警后请重新对刀置零");
+            toolTipSerial.SetToolTip(btnGRBLDatum,
+                "置零（G10 L20 P0 X0 Y0 Z0）\r\n" +
+                "把当前位置设为工作原点，只改软件坐标、机器不动\r\n" +
+                "运行写字程序前：放好笔 → 点此置零 → 再按 ▶");
+            toolTipSerial.SetToolTip(btnGRBLReset,
+                "软复位（完整）——存坐标、清状态、复位控制板\r\n" +
+                "立即停止一切，位置丢失，需重新置零对刀（有确认框）");
+            toolTipSerial.SetToolTip(btnGRBLHardReset,
+                "硬复位（DTR/RTS 信号）——依赖硬件接线，成败因板而异\r\n" +
+                "软复位无效时的最后手段");
         }
         public void Set2ndSerial(ControlSerialForm handle)
         {
@@ -1378,10 +1401,12 @@ namespace GrblPlotter
             if (!isStreaming || isStreamingPause)
             {
                 string cmd = cBCommand.Text.ToUpper();
-                /* 2026-10-06 candidate D: while a pause has settled, refuse manual motion and
-                 * re-datum commands (R6: a hand-typed jog forced the risky [Restore Position]
-                 * path; G10/G92 mid-pause would corrupt the frame the restore relies on). */
-                if (AutoWriter.PauseMoveGuard.ShouldBlock(isStreamingPause, cmd))
+                /* 2026-10-06 candidate D: while a pause has settled - or the controller sits in
+                 * HOLD for any reason - refuse manual motion and re-datum commands (R6: a
+                 * hand-typed jog forced the risky [Restore Position] path; G10/G92 mid-pause
+                 * would corrupt the frame the restore relies on; a motion line typed into a
+                 * HOLD queues in the planner and fires unexpectedly on release). */
+                if (AutoWriter.PauseMoveGuard.ShouldBlock(isStreamingPause, grblStateNow == GrblState.hold, cmd))
                 {
                     AddToLog(AutoWriter.PauseMoveGuard.RefusalMessage);
                     return;

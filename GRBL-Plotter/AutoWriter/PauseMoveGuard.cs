@@ -26,7 +26,7 @@ namespace GrblPlotter.AutoWriter
 {
     internal static class PauseMoveGuard
     {
-        public const string RefusalMessage = "[Blocked while paused: resume or stop before moving / re-datum]";
+        public const string RefusalMessage = "[Blocked while paused/holding: resume, release (~) or reset before moving / re-datum]";
 
         private static readonly Regex AxisWord = new Regex("[XYZABC]\\s*-?\\d", RegexOptions.Compiled);
 
@@ -42,10 +42,14 @@ namespace GrblPlotter.AutoWriter
             return AxisWord.IsMatch(cmd);
         }
 
-        /* The guard only applies while a pause has settled (isStreamingPause);
-         * during active streaming the command box is already disabled upstream,
-         * and outside streaming manual motion is the whole point of the box. */
-        public static bool ShouldBlock(bool isStreamingPause, string command)
-        { return isStreamingPause && IsMotionCommand(command); }
+        /* The guard applies while a pause has settled (isStreamingPause) and whenever the
+         * controller sits in HOLD (grblInHold): a motion line typed into a holding controller
+         * does not run immediately - it queues into the planner and fires unexpectedly on the
+         * next release (13:40: "G91 G0 X5" typed into the wedged HOLD after a stop). During
+         * active streaming the command box is already disabled upstream, and in IDLE manual
+         * motion is the whole point of the box. Realtime releases (进料保持/恢复 buttons) and
+         * "$X" never pass through here, so the escape hatches stay open. */
+        public static bool ShouldBlock(bool isStreamingPause, bool grblInHold, string command)
+        { return (isStreamingPause || grblInHold) && IsMotionCommand(command); }
     }
 }

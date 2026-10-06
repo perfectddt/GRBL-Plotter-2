@@ -147,6 +147,25 @@ try {
         throw 'btnGRBLDatum must be to the left of btnGRBLHardReset.'
     }
 
+    # 2026-10-06: hover-help regression guard. SetSerialFormToolTips() in the constructor must
+    # override the English resx tooltips of the four customized buttons with Chinese help. An
+    # empty tooltip or one without any CJK glyph means the override was lost. (Script stays pure
+    # ASCII: CJK is detected by char code, not by a literal.)
+    $tipField = $formType.GetField('toolTipSerial', [Reflection.BindingFlags]::NonPublic -bor [Reflection.BindingFlags]::Instance)
+    if (-not $tipField) { throw 'toolTipSerial field not found on ControlSerialForm.' }
+    $tip = $tipField.GetValue($form)
+    foreach ($btnName in @('btnGRBLUnlock', 'btnGRBLDatum', 'btnGRBLReset', 'btnGRBLHardReset')) {
+        $c = $form.Controls.Find($btnName, $true)[0]
+        $t = $tip.GetToolTip($c)
+        if ([string]::IsNullOrEmpty($t)) { throw "$btnName lost its tooltip." }
+        $hasCjk = $false
+        foreach ($ch in $t.ToCharArray()) {
+            if ($ch -ge [char]0x4E00 -and $ch -le [char]0x9FFF) { $hasCjk = $true; break }
+        }
+        if (-not $hasCjk) { throw "$btnName tooltip has no CJK text (constructor override lost?): $t" }
+        $log.Add("Tooltip $btnName : " + $t.Length + " chars, CJK ok")
+    }
+
     # The command input and the send button must still fill row 4 without overlapping.
     $cmd = $form.Controls.Find('cBCommand', $true)[0]
     $send = $form.Controls.Find('btnSend', $true)[0]

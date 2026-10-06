@@ -53,6 +53,33 @@ namespace GrblPlotter.UserControls
             GbFlowControl.Click += GbFlowControl_Click;
             timerBlink.Elapsed += TimerBlink_Tick;
             timerBlink.Interval = 330;
+            SetFlowControlToolTips();
+        }
+
+        /* 2026-10-06 AutoWriter: hover help (Chinese) distinguishing the raw real-time commands
+         * from the left panel's smart software pause. Raw '!' freezes only the machine - the pen
+         * springs back after 0.5 s and there is no rewind/re-press, so for writing the ⏸ in the
+         * streaming panel is the recommended pause. */
+        private void SetFlowControlToolTips()
+        {
+            toolTip1.AutoPopDelay = 20000;
+            toolTip1.InitialDelay = 400;
+            toolTip1.ReshowDelay = 200;
+            toolTip1.SetToolTip(BtnFeedHold,
+                "进料保持（!）——立即冻住机器运动，位置不丢，按「恢复 ~」继续\r\n" +
+                "注意：只冻机器，软件继续排队；笔压住时超 0.5 秒会回弹，继续后可能缺墨\r\n" +
+                "写字暂停请优先用左栏 ▶/⏸（自动抬笔、恢复时重新压笔）");
+            toolTip1.SetToolTip(BtnResume,
+                "恢复（~）——解除进料保持 / 门锁，机器立刻继续运动");
+            toolTip1.SetToolTip(BtnSafetyDoor,
+                "安全门（0x84）——挂起运动（模拟门被打开），按「恢复 ~」解除\r\n" +
+                "本机没有安全门开关，一般用不到");
+            toolTip1.SetToolTip(BtnReset,
+                "软复位——立即停止并清空控制板队列，位置丢失，之后需重新置零对刀\r\n" +
+                "（有确认框；写字中途误按会毁掉当前作品）");
+            toolTip1.SetToolTip(BtnKillAlarm,
+                "解除报警（$X）——报警锁定后点此解锁\r\n" +
+                "注意：解锁 ≠ 位置已知，限位类报警后请重新对刀置零");
         }
         private void UCFlowControl_Load(object sender, EventArgs e)
         {
