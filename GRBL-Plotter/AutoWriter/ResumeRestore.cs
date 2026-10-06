@@ -40,25 +40,42 @@ namespace GrblPlotter.AutoWriter
 
         /* Build the restore lines in send order.
          * xyMoved / zMoved are computed by the caller with Gcode.IsEqual so the
-         * tolerance matches the rest of the streaming code exactly. */
+         * tolerance matches the rest of the streaming code exactly.
+         *
+         * 2026-10-06 candidate B: the XY restore used to be a G0 rapid issued
+         * BEFORE the pen was lifted - with the pen down that dragged ink across
+         * the paper (the exact risk R6 was designed to probe). The order is now
+         * lift -> travel -> settle -> re-press, and the travel itself is a G1
+         * with the machine's proven travel feed (F1800) instead of a G0 rapid,
+         * so no pen state ever combines with a rapid move. */
         public static string[] BuildLines(bool xyMoved, bool zMoved,
                                           double pauseX, double pauseY, double pauseZ)
         {
-            var lines = new List<string>(4);
-            if (xyMoved)
+            var lines = new List<string>(5);
+            if (IsPenDown(pauseZ) && xyMoved)
             {
-                lines.Add(Fmt("G90 G0 X{0:0.000} Y{1:0.000}", pauseX, pauseY));
-                lines.Add("G4 P0.5");                       // settle, matches upstream behaviour
+                lines.Add("G90 G1 Z0 F10000");              // lift FIRST (real transition: book Z>0)
+                lines.Add(Fmt("G90 G1 X{0:0.000} Y{1:0.000} F1800", pauseX, pauseY));   // travel feed
+                lines.Add("G4 P0.5");                       // settle before the pen touches paper
+                lines.Add(Fmt("G1 Z{0:0.000} F10000", pauseZ));   // re-press LAST (0->Z, real)
             }
-            if (IsPenDown(pauseZ))
+            else if (IsPenDown(pauseZ))
             {
                 // Spring-back guard: real transitions only, zero-length moves are dropped by grbl.
                 lines.Add("G90 G1 Z0 F10000");
                 lines.Add(Fmt("G1 Z{0:0.000} F10000", pauseZ));
             }
-            else if (zMoved)
+            else
             {
-                lines.Add(Fmt("G0 Z{0:0.000}", pauseZ));
+                if (xyMoved)
+                {
+                    lines.Add(Fmt("G90 G1 X{0:0.000} Y{1:0.000} F1800", pauseX, pauseY));
+                    lines.Add("G4 P0.5");                   // settle, matches upstream behaviour
+                }
+                else if (zMoved)
+                {
+                    lines.Add(Fmt("G1 Z{0:0.000} F10000", pauseZ));
+                }
             }
             return lines.ToArray();
         }

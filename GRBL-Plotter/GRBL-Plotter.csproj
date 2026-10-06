@@ -489,6 +489,9 @@
     <Compile Include="AutoWriter\ResetGuard.cs" />
     <Compile Include="AutoWriter\SoftwareDatum.cs" />
     <Compile Include="AutoWriter\ResumeRestore.cs" />
+    <Compile Include="AutoWriter\StreamThrottle.cs" />
+    <Compile Include="AutoWriter\PauseMoveGuard.cs" />
+    <Compile Include="AutoWriter\StrokeBoundary.cs" />
     <Compile Include="AutoWriter\AlarmUnlock.cs" />
     <Compile Include="AutoWriter\Models\MachineProfile.cs" />
     <Compile Include="AutoWriter\Models\WritingStroke.cs" />

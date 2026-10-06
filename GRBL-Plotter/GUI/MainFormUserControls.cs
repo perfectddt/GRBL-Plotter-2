@@ -222,6 +222,11 @@ namespace GrblPlotter
                 // AutoWriter candidate G: the flow-control panel "Reset" button only forwards the raw
                 // byte 0x18, so this is the last place that can still ask before it leaves the PC.
                 if ((e.Realtime == 0x18) && !ConfirmSoftReset(isStreaming)) return;
+                // AutoWriter candidate I: after the confirmation, route the flow-panel reset through
+                // the same FULL soft reset as COM CNC (save position + state reset + 0x18), so both
+                // reset entries behave identically instead of one firing a bare byte.
+                if (e.Realtime == 0x18)
+                { _serial_form.GrblReset(true); return; }   // savePos, same as COM CNC reset
                 SendRealtimeCommand(e.Realtime);
             }
             else                                                // send regular command

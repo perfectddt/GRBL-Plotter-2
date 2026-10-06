@@ -75,14 +75,15 @@ Assert-False ([bool]$isPenDown.Invoke($null, @(0.0)))  'IsPenDown(0)'
 Assert-True  ([bool]$isPenDown.Invoke($null, @(5.0)))  'IsPenDown(5)'
 Assert-True  ([bool]$isPenDown.Invoke($null, @(2.5)))  'IsPenDown(2.5)'
 
-# ---- Case A: the R6 rerun itself - XY moved (+5/+3), pen down at (22,6,Z5). ----
+# ---- Case A: the R6 rerun itself - XY moved (+5/+3), pen down at (22,6,Z5).
+# Candidate B order: lift FIRST, travel with G1+F1800, settle, re-press LAST. No G0 anywhere. ----
 $a = Invoke-Build $true $true 22.0 6.0 5.0
 Assert-Equal 4 $a.Count 'Case A line count'
-Assert-Equal 'G90 G0 X22.000 Y6.000' $a[0] 'Case A XY restore'
-Assert-Equal 'G4 P0.5'               $a[1] 'Case A dwell'
-Assert-Equal 'G90 G1 Z0 F10000'      $a[2] 'Case A wiggle down-to-up'
-Assert-Equal 'G1 Z5.000 F10000'      $a[3] 'Case A wiggle re-press'
-Assert-False (($a -join '|').Contains('G0 Z5')) 'Case A must not emit a bare zero-length G0 Z5'
+Assert-Equal 'G90 G1 Z0 F10000'           $a[0] 'Case A lifts pen FIRST'
+Assert-Equal 'G90 G1 X22.000 Y6.000 F1800' $a[1] 'Case A XY travel is G1 with explicit feed'
+Assert-Equal 'G4 P0.5'                    $a[2] 'Case A dwell before re-press'
+Assert-Equal 'G1 Z5.000 F10000'           $a[3] 'Case A re-press LAST'
+Assert-False (($a -join '|').Contains('G0')) 'Case A must not emit any G0 rapid'
 
 # ---- Case B: the common resume - nothing moved, but the pen was down. Previously broken. ----
 $b = Invoke-Build $false $false 22.0 6.0 5.0
@@ -94,16 +95,16 @@ Assert-Equal 'G1 Z5.000 F10000' $b[1] 'Case B wiggle re-press'
 $c = Invoke-Build $false $false 10.0 2.0 0.0
 Assert-Equal 0 $c.Count 'Case C emits nothing'
 
-# ---- Case D: XY moved, pen up - no pointless zero-length Z line. ----
+# ---- Case D: XY moved, pen up - G1 travel with explicit feed, no pointless Z line. ----
 $d = Invoke-Build $true $false 10.0 2.0 0.0
 Assert-Equal 2 $d.Count 'Case D line count'
-Assert-Equal 'G90 G0 X10.000 Y2.000' $d[0] 'Case D XY restore'
-Assert-Equal 'G4 P0.5'               $d[1] 'Case D dwell'
+Assert-Equal 'G90 G1 X10.000 Y2.000 F1800' $d[0] 'Case D XY travel is G1 with explicit feed'
+Assert-Equal 'G4 P0.5'                     $d[1] 'Case D dwell'
 
-# ---- Case E: only Z jogged, pen-up target - old G0 restore preserved. ----
+# ---- Case E: only Z jogged, pen-up target - G1 Z restore (zero-length, grbl drops it). ----
 $e = Invoke-Build $false $true 10.0 2.0 0.0
 Assert-Equal 1 $e.Count 'Case E line count'
-Assert-Equal 'G0 Z0.000' $e[0] 'Case E Z restore'
+Assert-Equal 'G1 Z0.000 F10000' $e[0] 'Case E Z restore'
 
 # ---- Case F: only Z jogged, pen-down target - wiggle restores and re-presses. ----
 $f = Invoke-Build $false $true 10.0 2.0 5.0
@@ -120,13 +121,13 @@ $oldCulture = [Threading.Thread]::CurrentThread.CurrentCulture
 try {
     [Threading.Thread]::CurrentThread.CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo('de-DE')
     $h = Invoke-Build $true $false 22.0 6.0 0.0
-    Assert-Equal 'G90 G0 X22.000 Y6.000' $h[0] 'Invariant format under de-DE'
+    Assert-Equal 'G90 G1 X22.000 Y6.000 F1800' $h[0] 'Invariant format under de-DE'
 } finally {
     [Threading.Thread]::CurrentThread.CurrentCulture = $oldCulture
 }
 
 $log.Add('')
-$log.Add('PASS: resume restore re-presses the pen with a real Z0->Z5 transition whenever the pause')
-$log.Add('point had the pen down (even with no XY motion), keeps the old behaviour for every other')
-$log.Add('case, and formats numbers invariantly.')
+$log.Add('PASS: resume restore lifts the pen BEFORE any XY travel, travels with G1 + explicit')
+$log.Add('F1800 (never a G0 rapid), re-presses LAST with a real 0->Z transition, keeps the old')
+$log.Add('behaviour for the no-motion cases, and formats numbers invariantly.')
 [IO.File]::WriteAllLines((Join-Path $repoRoot 'artifacts\stage0\resume-restore-test.txt'), $log)

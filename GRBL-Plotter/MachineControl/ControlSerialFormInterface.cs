@@ -644,6 +644,17 @@ namespace GrblPlotter
                         ReadSettings();
                     }
                 }
+                /* 2026-10-06 candidate E/F: after the pause/stop feed-hold '!', the controller
+                 * reports HOLD and never reaches IDLE by itself. Settle the software pause on
+                 * HOLD exactly once (position save, candidate-J rewind, $G, flow-control code),
+                 * but only when a pause/stop was actually requested - a manual '!' during
+                 * streaming (the R1 raw path) must not trigger this bookkeeping. */
+                else if ((grblStateNow == GrblState.hold) && isStreaming
+                        && AutoWriter.StreamThrottle.ShouldSettleOnHold(isStreamingRequestPause || isStreamingRequestStopp, isStreamingPause))
+                {
+                    AddToLog("[Pause settles on HOLD - position continuous]");
+                    StreamingIDLE();
+                }
             }
             grblStateLast = grblStateNow;
         }
@@ -1680,6 +1691,17 @@ namespace GrblPlotter
                     return "OV";// buffer[buffer.Count-1];
                 else
                     return "UR";
+            }
+            /* 2026-10-06 candidate C: read-only access by absolute index, so the pause logic
+             * can scan the not-yet-sent lines for a stroke boundary without moving any cursor. */
+            public string PeekLine(int index)
+            {
+                lock (bufferLock)
+                {
+                    if ((index >= 0) && (index < buffer.Count))
+                        return buffer[index];
+                    return "";
+                }
             }
             public int GetSentLineNr()
             {

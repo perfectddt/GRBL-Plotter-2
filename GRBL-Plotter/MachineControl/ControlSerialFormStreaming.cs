@@ -69,7 +69,10 @@ namespace GrblPlotter
 
         private bool isStreaming = false;        		// true when steaming is in progress
         private bool isStreamingRequestPause = false; 	// true when request pause (wait for idle to switch to pause)
-        private bool isStreamingPause = false;    		// true when steaming-pause 
+        private bool isStreamingPause = false;    		// true when steaming-pause
+        /* 2026-10-06 candidate C: >0 while a pause drains the last few lines up to a stroke
+         * boundary (pen-up Z0). 0 means the send loop blocks as soon as a pause is requested. */
+        private int pauseDrainRemaining = 0;
         private bool isStreamingCheck = false;    		// true when steaming is in progress (check)
         private bool isStreamingRequestStopp = false;   // 
         private bool getParserState = false;      		// true to send $G after status switched to idle
@@ -177,6 +180,7 @@ namespace GrblPlotter
                 AddToLog("!!! Override Spindle Speed");
             isStreamingPause = false;
             isStreamingRequestPause = false;
+            pauseDrainRemaining = 0;            // candidate C: no boundary drain across jobs
             isStreamingCheck = check;
             streamingStateNow = GrblStreaming.ok;
 
@@ -528,6 +532,25 @@ namespace GrblPlotter
             if (!isStreamingPause)
             {
                 isStreamingRequestPause = true;     // wait until buffer is empty before switch to pause
+                /* 2026-10-06 candidate C: prefer a clean stop. If a pen-up (Z0) line is within
+                 * the next few unsent lines, keep feeding up to it and let grbl drain to IDLE -
+                 * the machine halts pen-up at a stroke boundary, no hold and no re-press
+                 * needed. Only when no boundary is near (one long stroke) fall back to
+                 * candidate E's immediate feed-hold. */
+                int drainToBoundary = AutoWriter.StrokeBoundary.LinesUntilBoundary(PeekUpcomingStreamLines(AutoWriter.StrokeBoundary.DefaultLookAhead), AutoWriter.StrokeBoundary.DefaultLookAhead);
+                if (drainToBoundary > 0)
+                {
+                    pauseDrainRemaining = drainToBoundary;
+                    AddToLog(string.Format("[Pause: drain {0} line(s) to stroke boundary]", drainToBoundary));
+                }
+                /* 2026-10-06 candidate E: feed-hold FIRST so the machine stops now instead of
+                 * after the ~10 s buffer drain (R2). The settle then happens on HOLD (see
+                 * ProcessGrblStateChange), resume releases with '~' before the restore lines. */
+                else if (AutoWriter.StreamThrottle.ShouldSendFeedHold(IsConnectedToGrbl(), grblStateNow == GrblState.run))
+                {
+                    AddToLog("[Feed hold ! - stop immediately]");
+                    RealtimeCommand((byte)'!');
+                }
                 AddToLog("[Pause streaming - wait for IDLE]");
                 AddToLog("[Save Settings]");
                 Logger.Info("▲▼▲▼▲ pauseStreaming RequestPause    ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲ Outstanding lines:{0}", (sendBuffer.Count - sendBuffer.IndexConfirmed));
@@ -540,6 +563,13 @@ namespace GrblPlotter
             else
             {   //if ((posPause.X != posWork.X) || (posPause.Y != posWork.Y) || (posPause.Z != posWork.Z))
                 AddToLog("++++++++++++++++++++++++++++++++++++");
+                /* 2026-10-06 candidate E: if the pause settled on HOLD (feed-hold path), release
+                 * the hold BEFORE the restore lines - motion queued while holding would not run. */
+                if (AutoWriter.StreamThrottle.ShouldReleaseHold(grblStateNow == GrblState.hold))
+                {
+                    AddToLog("[Release hold ~ - resume motion]");
+                    RealtimeCommand((byte)'~');
+                }
                 timerSerial.Interval = Grbl.pollInterval;
                 if (parserStateGC.Contains("F0"))
                 {
@@ -588,6 +618,22 @@ namespace GrblPlotter
             UpdateControls();
         }   // pauseStreaming
 
+        /* 2026-10-06 candidate C: read the next not-yet-sent lines (index 0 = next to send)
+         * so the pause logic can look for a stroke boundary without moving any cursor. */
+        private System.Collections.Generic.List<string> PeekUpcomingStreamLines(int maxCount)
+        {
+            var list = new System.Collections.Generic.List<string>(maxCount);
+            int start = streamingBuffer.IndexSent;
+            for (int i = 0; i < maxCount; i++)
+            {
+                string line = streamingBuffer.PeekLine(start + i);
+                if (line.Length == 0)
+                    break;
+                list.Add(line);
+            }
+            return list;
+        }
+
         /******************************************************************
          * stopStreaming()
          * Initiate stop (wait until IDLE)
@@ -601,7 +647,26 @@ namespace GrblPlotter
             }
 
             if (isNotStartup)
+            {
+                /* 2026-10-06 candidate F: halt the machine NOW with '!' (R3: the stop button used
+                 * to leave the controller drawing ~2 more characters from its buffer), finalize
+                 * the software stop, then release the hold with '~' so the <= MaxInFlightLines
+                 * residual queued lines run out and the controller returns to IDLE - position
+                 * intact, no lingering HOLD state, no reset. Without the release the stale queue
+                 * would fire at the next program start. */
+                bool sentHold = AutoWriter.StreamThrottle.ShouldSendFeedHold(IsConnectedToGrbl(), grblStateNow == GrblState.run);
+                if (sentHold)
+                {
+                    AddToLog("[Stop: feed hold ! - halt immediately]");
+                    RealtimeCommand((byte)'!');
+                }
                 StopStreamingFinal();
+                if (sentHold || (grblStateNow == GrblState.hold))
+                {
+                    AddToLog("[Stop: release ~ - residual queued lines run out]");
+                    RealtimeCommand((byte)'~');
+                }
+            }
             else
             {
                 IsHeightProbing = false;
@@ -753,14 +818,26 @@ namespace GrblPlotter
                 }
             }
 
-            if (waitForIdle || isStreamingRequestPause || (countPreventIdle > 0))
+            if (waitForIdle || (countPreventIdle > 0))
             {
-                Logger.Trace("PreProcessStreaming abort- waitForIdle:{0}  isStreamingRequestPause:{1}  countPreventIdle:{2}", waitForIdle, isStreamingRequestPause, countPreventIdle);
+                Logger.Trace("PreProcessStreaming abort- waitForIdle:{0}  countPreventIdle:{1}", waitForIdle, countPreventIdle);
+                return;
+            }
+            /* 2026-10-06 candidate C: a requested pause still lets the drain-to-boundary lines
+             * through (pauseDrainRemaining > 0); once they are sent the loop blocks as before. */
+            if (isStreamingRequestPause && (pauseDrainRemaining <= 0))
+            {
+                Logger.Trace("PreProcessStreaming abort- isStreamingRequestPause:{0}  pauseDrainRemaining:{1}", isStreamingRequestPause, pauseDrainRemaining);
                 return;
             }
 
             int lengthToSend = streamingBuffer.LengthSent() + 1;
-            while ((streamingBuffer.IndexSent < streamingBuffer.Count) && (grblBufferFree >= lengthToSend) && !waitForIdle && (streamingStateNow != GrblStreaming.pause) && ExternalCOMReady())
+            /* 2026-10-06 candidate E/F: cap sent-but-unconfirmed lines (see AutoWriter/StreamThrottle.cs).
+             * Keeps grbl's RX+planner nearly empty so '!' stops almost immediately and the
+             * post-resume air-draw residual is bounded to <= ~4 short strokes. */
+            while ((streamingBuffer.IndexSent < streamingBuffer.Count) && (grblBufferFree >= lengthToSend) && !waitForIdle && (streamingStateNow != GrblStreaming.pause) && ExternalCOMReady()
+                    && AutoWriter.StreamThrottle.OkToSendMore(streamingBuffer.IndexSent, streamingBuffer.IndexConfirmed)
+                    && (!isStreamingRequestPause || (pauseDrainRemaining > 0)))
             {
                 lock (sendDataLock)
                 {
@@ -831,6 +908,8 @@ namespace GrblPlotter
                     /* remove spaces from line (in echo, there are also no spaces) */
                     sendBuffer.Add(line.Replace(" ", ""), streamingBuffer.GetSentLineNr());
                     streamingBuffer.LineWasSent();
+                    if (pauseDrainRemaining > 0)
+                        pauseDrainRemaining--;      // candidate C: one more drain-to-boundary line fed
                     streamingStateOld = streamingStateNow;
                     lengthToSend = streamingBuffer.LengthSent() + 1;    // update while-variable
                 }   // lock
@@ -862,6 +941,7 @@ namespace GrblPlotter
                 {
                     isStreamingPause = true;
                     isStreamingRequestPause = false;
+                    pauseDrainRemaining = 0;        // candidate C: pause settled, drain allowance spent
                     streamingStateNow = GrblStreaming.pause;
                     posPause = posWork;
                     /* 2026-10-06: include Z - the pen-down/pen-up settle state decides whether the
@@ -897,6 +977,19 @@ namespace GrblPlotter
 
                     if (getParserState)
                     { RequestSend("$G"); }
+
+                    /* 2026-10-06 candidate A: lift the pen when the pause/stop settles with the
+                     * pen down. posPause keeps the pre-lift Z so candidate K still re-presses on
+                     * resume; its "G1 Z0" then is a zero-length no-op and "G1 Z5" is the real
+                     * transition that re-fires the servo - the two candidates compose. On the
+                     * candidate-E HOLD path the lift queues behind the hold and runs on the '~'
+                     * release, just before the restore lines; on a natural-IDLE settle it runs
+                     * immediately. Explicit G90 in case the operator left G91 active. */
+                    if (AutoWriter.ResumeRestore.IsPenDown(posPause.Z))
+                    {
+                        AddToLog("[Auto pen-up Z0]");
+                        RequestSend("G90 G1 Z0 F10000");
+                    }
 
                     if (isStreamingRequestStopp)    // 20200717
                     {

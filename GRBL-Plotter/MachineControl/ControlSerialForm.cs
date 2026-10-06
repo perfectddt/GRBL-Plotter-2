@@ -1378,6 +1378,14 @@ namespace GrblPlotter
             if (!isStreaming || isStreamingPause)
             {
                 string cmd = cBCommand.Text.ToUpper();
+                /* 2026-10-06 candidate D: while a pause has settled, refuse manual motion and
+                 * re-datum commands (R6: a hand-typed jog forced the risky [Restore Position]
+                 * path; G10/G92 mid-pause would corrupt the frame the restore relies on). */
+                if (AutoWriter.PauseMoveGuard.ShouldBlock(isStreamingPause, cmd))
+                {
+                    AddToLog(AutoWriter.PauseMoveGuard.RefusalMessage);
+                    return;
+                }
                 RequestSend(cmd);
                 cBCommand.Items.Remove(cBCommand.SelectedItem);
                 cBCommand.Items.Insert(0, cmd);
