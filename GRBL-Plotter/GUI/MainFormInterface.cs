@@ -288,11 +288,14 @@ namespace GrblPlotter
 
                     case GrblState.hold:
                    //     btnResume.BackColor = GroupColor.Yellow;
-                        ucFlowControl.HighlightResume(true);
+                        bool stopLatched = _serial_form != null && _serial_form.IsStopHoldLatched;
+                        ucFlowControl.HighlightResume(!stopLatched);
                         lastInfoText = ucStreaming.GetStatusTextStreaming();// lbInfo.Text;
-                        lblInfoText = Localization.GetString("mainInfoResume");     //"Press 'Resume' to proceed";
+                        lblInfoText = stopLatched
+                            ? "已停止：禁止恢复，请重置后重新确认原点"
+                            : Localization.GetString("mainInfoResume");
 
-                        if (Grbl.lastErrorNr > 0)
+                        if (stopLatched || Grbl.lastErrorNr > 0)
                             lblInfoColor = Color.Fuchsia;
                         else
                             lblInfoColor = Color.Yellow;

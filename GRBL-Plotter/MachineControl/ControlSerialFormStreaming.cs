@@ -70,11 +70,9 @@ namespace GrblPlotter
         private bool isStreaming = false;        		// true when steaming is in progress
         private bool isStreamingRequestPause = false; 	// true when request pause (wait for idle to switch to pause)
         private bool isStreamingPause = false;    		// true when steaming-pause
-        /* 2026-10-06 candidate F follow-up: stop sent '!' and must release with '~', but this
-         * firmware drops '~' unless it already sits in Hold:0 - the 13:40 log shows '!' and '~'
-         * a millisecond apart wedging the controller in HOLD (the restart then froze at 0%,
-         * snt:4 cnfrmnd:0 forever). Defer the release to the HOLD status report. */
-        private bool pendingStopHoldRelease = false;
+        // A software stop cannot clear GRBL's planner. Keep HOLD until a controller welcome confirms reset.
+        private volatile bool stopHoldLatched = false;
+        public bool IsStopHoldLatched { get { return stopHoldLatched; } }
         /* 2026-10-06 candidate C: >0 while a pause drains the last few lines up to a stroke
          * boundary (pen-up Z0). 0 means the send loop blocks as soon as a pause is requested. */
         private int pauseDrainRemaining = 0;
@@ -109,13 +107,14 @@ namespace GrblPlotter
         ****************************************************************************/
         public void StartStreaming(IList<string> gCodeList, int startAtLine, int stopAtLine, bool check)
         {
-            /* 2026-10-06 follow-up: never stream into a HOLD. 13:41 log: with the controller
-             * wedged in HOLD, the restart pumped the header lines into the stuck planner and
-             * froze at 0% (snt:4 cnfrmnd:0, state:hold forever). The pause-resume path is not
-             * affected - it re-enters via PreProcessStreaming, never through here. */
-            if (IsConnectedToGrbl() && (grblStateNow == GrblState.hold) && !isStreamingPause)
+            if (stopHoldLatched)
             {
-                AddToLog("[Start refused: controller in HOLD - release it (恢复/进料保持) or 重置 first]");
+                AddToLog(AutoWriter.StopHoldGuard.RefusalMessage);
+                return;
+            }
+            if (IsConnectedToGrbl() && grblStateNow == GrblState.hold)
+            {
+                AddToLog("[Start refused: controller in HOLD - 请先手动重置，收到复位响应后重新确认原点再开始]");
                 Logger.Info("StartStreaming refused: grblStateNow==hold");
                 return;
             }
@@ -541,6 +540,11 @@ namespace GrblPlotter
          ************************************************************************/
         public void PauseStreaming()
         {
+            if (stopHoldLatched)
+            {
+                AddToLog(AutoWriter.StopHoldGuard.RefusalMessage);
+                return;
+            }
             UpdateLogging();
             //    if (logStartStop) Logger.Trace("Ser:{0} pauseStreaming()  isStreamingPause {1}   isStreamingRequestPause {2}   {3}", iamSerial, isStreamingPause, isStreamingRequestPause, ListInfoStream());
             // start pause			
@@ -651,10 +655,11 @@ namespace GrblPlotter
 
         /******************************************************************
          * stopStreaming()
-         * Initiate stop (wait until IDLE)
+         * Red stop retains controller HOLD; startup cleanup waits until IDLE
          ******************************************************************/
         public void StopStreaming(bool isNotStartup)
         {
+            bool wasCheckMode = isStreamingCheck;
             if (isStreamingCheck)
             {
                 SendLine("$C");         // stopStreaming check
@@ -663,34 +668,24 @@ namespace GrblPlotter
 
             if (isNotStartup)
             {
-                /* 2026-10-06 candidate F: halt the machine NOW with '!' (R3: the stop button used
-                 * to leave the controller drawing ~2 more characters from its buffer), finalize
-                 * the software stop, then release the hold with '~' so the residual queued lines
-                 * run out and the controller returns to IDLE - position intact, no lingering
-                 * HOLD state, no reset. Without the release the stale queue would fire at the
-                 * next program start. */
-                bool sentHold = AutoWriter.StreamThrottle.ShouldSendFeedHold(IsConnectedToGrbl(), grblStateNow == GrblState.run);
-                if (sentHold)
+                // Do not trust a polled Idle report while the host is still streaming.
+                // Serialize the latch with all writes: no queued line can follow the stop-time '!'.
+                lock (sendDataLock)
+                {
+                    if (!wasCheckMode && AutoWriter.StopHoldGuard.ShouldLatch(IsConnectedToGrbl(), isStreaming,
+                            grblStateNow == GrblState.run, grblStateNow == GrblState.hold))
+                    {
+                        stopHoldLatched = true;
+                        pauseDrainRemaining = 0;
+                        SerialPortDataSend(new byte[] { (byte)'!' }, 0, 1);
+                    }
+                }
+                if (stopHoldLatched)
                 {
                     AddToLog("[Stop: feed hold ! - halt immediately]");
-                    RealtimeCommand((byte)'!');
+                    AddToLog(AutoWriter.StopHoldGuard.RefusalMessage);
                 }
                 StopStreamingFinal();
-                if (sentHold)
-                {
-                    /* The release must wait for the HOLD status report: sent inline, a
-                     * millisecond after '!', the firmware drops it (13:40 wedge). The
-                     * pending flag is fired from ProcessGrblStateChange. */
-                    pendingStopHoldRelease = true;
-                    AddToLog("[Stop: wait for HOLD report, then release ~]");
-                }
-                else if (grblStateNow == GrblState.hold)
-                {
-                    /* Already settled in Hold:0 (e.g. stop while paused) - the release
-                     * works immediately. */
-                    AddToLog("[Stop: release ~ - residual queued lines run out]");
-                    RealtimeCommand((byte)'~');
-                }
             }
             else
             {
@@ -740,7 +735,6 @@ namespace GrblPlotter
             isStreamingRequestPause = false;
             isStreamingPause = false;
             isStreamingRequestStopp = false;
-            pendingStopHoldRelease = false;     // cleared here; StopStreaming re-arms it AFTER this call
 
             if (isStopping)		// 20200717
             {
@@ -834,6 +828,7 @@ namespace GrblPlotter
          **********************************************************************************/
         private void PreProcessStreaming()
         {
+            if (stopHoldLatched) return;
             if (!lowLevelPerformance)
             {
                 int lengthFree = sendBuffer.MissingConfirmationLength();        // 2022-05-27 keep sendBuffer small, for short reaction time on pause request

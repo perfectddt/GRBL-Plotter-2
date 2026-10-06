@@ -644,17 +644,6 @@ namespace GrblPlotter
                         ReadSettings();
                     }
                 }
-                /* 2026-10-06 candidate F follow-up: the stop-time '!' reaches Hold:0 only after
-                 * deceleration; release it here, on the HOLD report, never inline - this firmware
-                 * drops a '~' that arrives before Hold:0 (13:40 wedge: stop one second after a
-                 * resume left the controller in HOLD and the next start froze at 0%). Runs
-                 * independently of isStreaming: StopStreamingFinal has already cleared it. */
-                else if ((grblStateNow == GrblState.hold) && pendingStopHoldRelease)
-                {
-                    pendingStopHoldRelease = false;
-                    AddToLog("[Stop: release ~ - residual queued lines run out]");
-                    RealtimeCommand((byte)'~');
-                }
                 /* 2026-10-06 candidate E/F: after the pause/stop feed-hold '!', the controller
                  * reports HOLD and never reaches IDLE by itself. Settle the software pause on
                  * HOLD exactly once (position save, candidate-J rewind, $G, flow-control code),
@@ -675,6 +664,16 @@ namespace GrblPlotter
         private void ProcessGrblWelcomeMessage(string rxStringTmp)
         {
             bool stream = isStreaming;
+            bool retainedStop = stopHoldLatched;
+            // A received controller welcome confirms that its planner was reset. Host bookkeeping,
+            // Idle/Alarm reports, disconnect, and $X must never clear a retained stop.
+            lock (sendDataLock)
+            {
+                ResetStreaming();
+                stopHoldLatched = false;
+            }
+            if (retainedStop)
+                AddToLog("[停止锁存已解除：收到控制器复位响应。位置可能已丢失，请重新确认原点后再开始。]");
             ProcessWelcomeMessage();
 
             if (stream || resetProcessed)	// unexpected reset
@@ -995,6 +994,11 @@ namespace GrblPlotter
         /***** Send real time command immediately *****/
         public void RealtimeCommand(byte cmd)
         {
+            if (stopHoldLatched && !AutoWriter.StopHoldGuard.AllowsRealtime(cmd))
+            {
+                AddToLog(AutoWriter.StopHoldGuard.RefusalMessage);
+                return;
+            }
             var dataArray = new byte[] { Convert.ToByte(cmd) };
             if (dataArray.Length > 0)// && !blockSend)
                 SerialPortDataSend(dataArray, 0, 1);
@@ -1017,6 +1021,17 @@ namespace GrblPlotter
         { return RequestSend(data, 0, keepComments); }
         public bool RequestSend(string data, int lineNr, bool keepComments)
         {
+            if (stopHoldLatched)
+            {
+                if (!AutoWriter.StopHoldGuard.AllowsLine(data))
+                {
+                    AddToLog(AutoWriter.StopHoldGuard.RefusalMessage);
+                    return false;
+                }
+                // Read-only queries must remain reachable in HOLD; do not enqueue behind the planner.
+                string query = data.Trim().ToUpperInvariant();
+                return SerialPortDataSend(query == "?" ? query : query + lineEndTXgrbl);
+            }
             if (Program.MachineInspectionMode && !AutoWriter.InspectionPolicy.AllowsLine(data, Program.ApprovedAxisStep))
             {
                 AddToLog("AutoWriter inspection blocked command: " + data);
@@ -1183,6 +1198,7 @@ namespace GrblPlotter
         private readonly string[] eeprom2 = { "G10", "G28", "G30" };
         public void ProcessSend()
         {
+            if (stopHoldLatched) return;
             // Logger.Trace("processSend grblBufferFree:{0}  waitForIdle:{1}", grblBufferFree, waitForIdle);
             // OkToSend = grblBufferFree >= buffer[sent].Length + 1
 

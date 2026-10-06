@@ -1,39 +1,12 @@
-/* 2026-10-06 candidates E + F (user-approved design: throttle N=4 + feed-hold '!')
- *
- * Pure decision logic for the streaming flow-control changes, kept free of
- * WinForms / firmware types so scripts/test-stage1-stream-throttle.ps1 can
- * compile this file standalone and assert every rule.
- *
- * Background: grbl's RX buffer (127 bytes) plus planner (~16 blocks) used to
- * hold ~24 short writing lines, so the software pause needed ~10 s to drain
- * and the stop point was uncontrollable (R2). Simply injecting '!' stops the
- * machine instantly BUT leaves the queued pen-down strokes in the planner:
- * after any pause longer than the servo's ~0.5 s spring-back those queued
- * strokes would execute with the pen physically up on resume - a new missing
- * -ink segment of up to ~2 characters that candidate K cannot fix (its
- * re-press lines can only queue behind the planner content).
- *
- * The approved compromise caps the in-flight (sent-but-unconfirmed) line
- * count, so the residual queue is tiny:
- *  - E (pause): send '!' immediately; with <= MaxInFlightLines lines in
- *    flight the machine halts almost at once and the post-resume air-draw
- *    risk is bounded to <= ~4 short strokes (<= ~2 cm), which the user
- *    accepted. Resume releases the hold with '~' before the restore lines.
- *  - F (stop): send '!' on stop; once the hold settles the stop finalizes
- *    and '~' releases the hold so the <= residual lines run out and the
- *    machine returns to IDLE with position intact (no lingering HOLD state,
- *    no reset, no next-start guard needed).
- *  - Pause/stop settling must accept GrblState.hold (not only idle/check),
- *    because after '!' the controller never reaches IDLE by itself.
+﻿/* The acknowledgement window limits host traffic, not the GRBL planner's motion queue.
+ * Feed hold stops motion after deceleration and retains that queue. Ordinary pause may resume;
+ * a red stop retains HOLD and forbids resume until a controller welcome confirms a reset.
  */
 namespace GrblPlotter.AutoWriter
 {
     internal static class StreamThrottle
     {
-        /* Max lines allowed to be sent-but-unconfirmed at any moment.
-         * 4 lines ~= <= 60 bytes, safely below the 127-byte RX buffer, and
-         * ~= <= 2 cm of writing at the usual 5 mm stroke pitch: the accepted
-         * upper bound for the resume air-draw residual after a hold. */
+        // Host sent-but-unacknowledged window; not a distance, time or planner-size bound.
         public const int MaxInFlightLines = 4;
 
         /* Extra gate for the PreProcessStreaming send loop. The byte-level
@@ -50,7 +23,7 @@ namespace GrblPlotter.AutoWriter
         { return isConnected && machineIsRunning; }
 
         /* Settle-on-hold replaces settle-on-idle exactly once per pause: only
-         * while a pause/stop request is pending and the pause has not settled
+         * while a pause request is pending and the pause has not settled
          * yet. A manual '!' during streaming (no request pending, the R1 raw
          * path) must NOT trigger the software-pause bookkeeping. */
         public static bool ShouldSettleOnHold(bool pauseOrStopRequested, bool alreadyPaused)
@@ -63,4 +36,23 @@ namespace GrblPlotter.AutoWriter
         public static bool ShouldReleaseHold(bool grblStateIsHold)
         { return grblStateIsHold; }
     }
+
+    internal static class StopHoldGuard
+    {
+        public const string RefusalMessage = "[停止锁存：控制器仍保留运动队列，禁止开始、恢复及发送指令。请手动重置，收到复位响应后重新确认原点再开始；$X 解锁不能清空队列。]";
+
+        public static bool ShouldLatch(bool connected, bool streaming, bool running, bool holding)
+        { return connected && (streaming || running || holding); }
+
+        public static bool AllowsLine(string command)
+        {
+            if (command == null) return false;
+            string query = command.Trim().ToUpperInvariant();
+            return query == "?" || query == "$G" || query == "$#" || query == "$$" || query == "$I";
+        }
+
+        public static bool AllowsRealtime(byte command)
+        { return command == (byte)'?' || command == (byte)'!' || command == 0x18 || command == 0x85; }
+    }
+
 }

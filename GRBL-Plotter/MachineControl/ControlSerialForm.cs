@@ -1107,6 +1107,11 @@ namespace GrblPlotter
 
         private void SerialPortDataSend(byte[] tmp, int a, int b)
         {
+            if (stopHoldLatched && (b != 1 || !AutoWriter.StopHoldGuard.AllowsRealtime(tmp[a])))
+            {
+                AddToLog(AutoWriter.StopHoldGuard.RefusalMessage);
+                return;
+            }
             if (Program.MachineInspectionMode &&
                 (b != 1 || tmp[a] != (byte)'?')) return;
             if (logTransmit) Logger.Trace("SerialPortDataSend data:{0} IsConnectedToGrbl:{1} Connected:{2} useEthernet:{3}  serOpen:{4}", tmp.ToString(), IsConnectedToGrbl(), Connected, useEthernet, serialPort.IsOpen);
@@ -1117,7 +1122,11 @@ namespace GrblPlotter
                 {
                     try
                     {
-                        serialPort.Write(tmp, a, b);
+                        lock (sendDataLock)
+                        {
+                            if (stopHoldLatched && (b != 1 || !AutoWriter.StopHoldGuard.AllowsRealtime(tmp[a]))) return;
+                            serialPort.Write(tmp, a, b);
+                        }
                         if (logStreamData) WriteLog(logFileSentData, tmp.ToString(), "1");
                         return;
                     }
@@ -1132,8 +1141,11 @@ namespace GrblPlotter
                 {
                     try
                     {
-                        if (Connection.CanWrite)
-                            Connection.Write(tmp, a, b);       //tmp[0]);
+                        lock (sendDataLock)
+                        {
+                            if (stopHoldLatched && (b != 1 || !AutoWriter.StopHoldGuard.AllowsRealtime(tmp[a]))) return;
+                            if (Connection.CanWrite) Connection.Write(tmp, a, b);
+                        }
                         if (logStreamData) WriteLog(logFileSentData, tmp.ToString(), "2");
                     }
                     catch (System.IO.IOException err)
@@ -1160,6 +1172,11 @@ namespace GrblPlotter
         }
         private bool SerialPortDataSend(string tmp)
         {
+            if (stopHoldLatched && !AutoWriter.StopHoldGuard.AllowsLine(tmp))
+            {
+                AddToLog(AutoWriter.StopHoldGuard.RefusalMessage);
+                return false;
+            }
             if (Program.MachineInspectionMode && !AutoWriter.InspectionPolicy.AllowsLine(tmp, Program.ApprovedAxisStep)) return false;
             if (logTransmit) Logger.Trace("SerialPortDataSend data:{0} IsConnectedToGrbl:{1} Connected:{2} useEthernet:{3}  serOpen:{4}", tmp, IsConnectedToGrbl(), Connected, useEthernet, serialPort.IsOpen);
             //   if (IsConnectedToGrbl() && (!string.IsNullOrEmpty(tmp)))
@@ -1172,7 +1189,11 @@ namespace GrblPlotter
                     {
                         try
                         {
-                            serialPort.Write(tmp);
+                            lock (sendDataLock)
+                            {
+                                if (stopHoldLatched && !AutoWriter.StopHoldGuard.AllowsLine(tmp)) return false;
+                                serialPort.Write(tmp);
+                            }
                             if (logStreamData && (tmp != "?")) WriteLog(logFileSentData, tmp, "3");
                             return true;
                         }
@@ -1206,8 +1227,11 @@ namespace GrblPlotter
                     try
                     {
                         byte[] myWriteBuffer = Encoding.ASCII.GetBytes(tmp);
-                        if (Connection.CanWrite)
-                            Connection.Write(myWriteBuffer, 0, myWriteBuffer.Length); //(tmp);
+                        lock (sendDataLock)
+                        {
+                            if (stopHoldLatched && !AutoWriter.StopHoldGuard.AllowsLine(tmp)) return false;
+                            if (Connection.CanWrite) Connection.Write(myWriteBuffer, 0, myWriteBuffer.Length);
+                        }
                         if (logStreamData && (tmp != "?")) WriteLog(logFileSentData, tmp, "4");
                         return true;
                     }

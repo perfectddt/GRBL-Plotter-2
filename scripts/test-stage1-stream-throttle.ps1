@@ -1,24 +1,9 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 
-# Offline test for the streaming throttle + feed-hold pause/stop (AutoWriter/StreamThrottle.cs).
-#
-# Why this exists (candidates E + F, user-approved 2026-10-06): grbl's RX buffer plus planner
-# used to hold ~24 short writing lines, so the software pause needed ~10 s to drain and the
-# stop point was uncontrollable (R2), while the stop button left the machine drawing ~2 more
-# characters (R3). Injecting '!' fixes the latency but leaves queued pen-down strokes in the
-# planner, which would air-draw after the pen's ~0.5 s spring-back. The approved compromise
-# caps in-flight (sent-but-unconfirmed) lines at 4 and combines it with '!' on pause/stop
-# and '~' on resume/stop-release, plus settling the software pause on HOLD.
-#
-# What must be asserted:
-#   - OkToSendMore caps at MaxInFlightLines and tolerates a rewound (negative) cursor.
-#   - Feed-hold is only injected while connected AND the machine is running.
-#   - Settle-on-hold fires only for a requested, not-yet-settled pause/stop (never for the
-#     manual R1 raw '!' path).
-#   - Hold release is emitted only when the controller really is in HOLD.
-#   - The wiring exists in the shipping code: throttle gate in PreProcessStreaming, '!' in
-#     PauseStreaming/StopStreaming, '~' on resume/stop release, HOLD branch in
-#     ProcessGrblStateChange.
+# Offline acceptance for acknowledgement throttling, ordinary pause/resume, and retained stop.
+# Four unacknowledged lines do NOT bound the planner. Stop must retain HOLD, block queued
+# commands and cycle start, and only clear its latch on a controller reset welcome.
+# Tests compile pure helpers and inspect safety-critical integration paths without a machine.
 #
 # Assertions stay ASCII-only, so this script is safe to run from Windows PowerShell 5.1
 # regardless of the console code page.
@@ -95,7 +80,7 @@ function Assert-Equal($expected, $actual, [string] $name) {
     $log.Add("ok - $name")
 }
 
-# ---- MaxInFlightLines: the approved compromise is exactly 4. ----
+# ---- Host acknowledgement window remains 4; controller planner may retain more. ----
 Assert-Equal 4 ([int]$maxField.GetValue($null)) 'MaxInFlightLines == 4'
 
 # ---- OkToSendMore: cap at 4 in-flight, always allow a rewound cursor. ----
@@ -166,6 +151,29 @@ $prog4 = [string[]]@('G1 X1 Y1 F200')
 Assert-Equal -1 ([int]$linesUntil.Invoke($null, @($prog4, 4))) 'program tail without boundary'
 Assert-Equal -1 ([int]$linesUntil.Invoke($null, @([string[]]@(), 4))) 'empty upcoming'
 
+# ---- Retained stop: stale polled Idle cannot override an active stream. ----
+$stopType = $assembly.GetType('GrblPlotter.AutoWriter.StopHoldGuard', $true)
+$latch = $stopType.GetMethod('ShouldLatch', $flags)
+$allowLine = $stopType.GetMethod('AllowsLine', $flags)
+$allowByte = $stopType.GetMethod('AllowsRealtime', $flags)
+Assert-True ([bool]$latch.Invoke($null, @($true, $true, $false, $false))) 'stop latches active stream with stale Idle'
+Assert-True ([bool]$latch.Invoke($null, @($true, $false, $true, $false))) 'stop latches controller Run after host completion'
+Assert-True ([bool]$latch.Invoke($null, @($true, $false, $false, $true))) 'stop latches settled HOLD'
+Assert-False ([bool]$latch.Invoke($null, @($true, $false, $false, $false))) 'empty Idle stop does not latch'
+Assert-False ([bool]$latch.Invoke($null, @($false, $true, $true, $false))) 'disconnected stop does not newly latch'
+foreach ($query in @('?', '$G', '$#', '$$', '$I', "  `$g`r`n")) {
+    Assert-True ([bool]$allowLine.Invoke($null, @($query))) "stop allows query $query"
+}
+foreach ($command in @('~', 'G1 X23 F60', 'X23', 'G90', 'M5', 'M9', '$X', '$H', '$J=G91 X1 F60', '$10=2', "`$G`nG1 X23")) {
+    Assert-False ([bool]$allowLine.Invoke($null, @($command))) "stop blocks $command"
+}
+foreach ($command in @([byte]63, [byte]33, [byte]24, [byte]133)) {
+    Assert-True ([bool]$allowByte.Invoke($null, @($command))) "stop allows safety byte $command"
+}
+foreach ($command in @([byte]126, [byte]144, [byte]158)) {
+    Assert-False ([bool]$allowByte.Invoke($null, @($command))) "stop blocks resume/accessory byte $command"
+}
+
 # ---- Wiring assertions: the shipping code must actually use the logic. ----
 $streamingFile = Join-Path $repoRoot 'GRBL-Plotter\MachineControl\ControlSerialFormStreaming.cs'
 $interfaceFile = Join-Path $repoRoot 'GRBL-Plotter\MachineControl\ControlSerialFormInterface.cs'
@@ -176,11 +184,18 @@ Assert-True ($streamingCode.Contains('StreamThrottle.OkToSendMore(streamingBuffe
 Assert-True ($streamingCode.Contains("[Feed hold ! - stop immediately]")) 'wiring: pause logs feed hold'
 Assert-True ($streamingCode.Contains("[Release hold ~ - resume motion]")) 'wiring: resume releases hold'
 Assert-True ($streamingCode.Contains("[Stop: feed hold ! - halt immediately]")) 'wiring: stop logs feed hold'
-Assert-True ($streamingCode.Contains("[Stop: wait for HOLD report, then release ~]")) 'wiring F-fix: stop defers the release'
-Assert-True ($streamingCode.Contains("pendingStopHoldRelease = true")) 'wiring F-fix: release flag armed after StopStreamingFinal'
-Assert-True ($interfaceCode.Contains("(grblStateNow == GrblState.hold) && pendingStopHoldRelease")) 'wiring F-fix: release fires on the HOLD report'
-Assert-True ($streamingCode.Contains("[Start refused: controller in HOLD")) 'wiring: StartStreaming refuses HOLD'
-Assert-True ($streamingCode.Contains("grblStateNow == GrblState.hold) && !isStreamingPause")) 'wiring: HOLD refusal keeps the pause-resume path exempt'
+Assert-False ($streamingCode.Contains('pendingStopHoldRelease')) 'stop never arms auto release'
+Assert-False ($interfaceCode.Contains('pendingStopHoldRelease')) 'status report never auto releases stop'
+Assert-True ($streamingCode.Contains('stopHoldLatched = true;')) 'stop arms latch before finalization'
+Assert-True ($streamingCode.Contains('ShouldLatch(IsConnectedToGrbl(), isStreaming,')) 'active host stream stops despite stale Idle'
+Assert-True ($streamingCode.Contains('!wasCheckMode &&')) 'check-only stop does not latch'
+Assert-True ($streamingCode.Contains('[Start refused: controller in HOLD')) 'StartStreaming refuses HOLD'
+Assert-True ($streamingCode.Contains('if (stopHoldLatched)')) 'start pause and producer guarded by stop latch'
+$resetBody = $streamingCode.Substring($streamingCode.IndexOf('private void ResetStreaming('))
+$resetBody = $resetBody.Substring(0, $resetBody.IndexOf('public void ProcessOkStreaming('))
+Assert-False ($resetBody.Contains('stopHoldLatched = false')) 'host ResetStreaming cannot clear latch'
+Assert-Equal 1 ([regex]::Matches($interfaceCode, 'stopHoldLatched = false;').Count) 'one received-welcome clear site'
+Assert-True ($interfaceCode.Contains('Read-only queries must remain reachable in HOLD')) 'queries bypass held planner'
 Assert-True ($streamingCode.Contains("RealtimeCommand((byte)'!')")) 'wiring: feed hold byte sent'
 Assert-True ($streamingCode.Contains("RealtimeCommand((byte)'~')")) 'wiring: cycle start byte sent'
 Assert-True ($interfaceCode.Contains('StreamThrottle.ShouldSettleOnHold')) 'wiring: HOLD settle branch in ProcessGrblStateChange'
@@ -196,6 +211,10 @@ $serialFormCode = [IO.File]::ReadAllText((Join-Path $repoRoot 'GRBL-Plotter\Mach
 Assert-True ($serialFormCode.Contains('AutoWriter.PauseMoveGuard.ShouldBlock(isStreamingPause, grblStateNow == GrblState.hold, cmd)')) 'wiring D: SendCommand consults guard with HOLD'
 Assert-True ($serialFormCode.Contains('AutoWriter.PauseMoveGuard.RefusalMessage')) 'wiring D: refusal logged'
 
+Assert-True ($serialFormCode.Contains('stopHoldLatched && !AutoWriter.StopHoldGuard.AllowsLine(tmp)')) 'serial string guard covers typed tilde and direct ProcessSend writes'
+Assert-True ($serialFormCode.Contains('!AutoWriter.StopHoldGuard.AllowsRealtime(tmp[a])')) 'serial byte guard covers realtime resume'
+Assert-True ($serialFormCode.Contains('lock (sendDataLock)')) 'serial writes serialize with stop latch'
+Assert-True ($interfaceCode.Contains('stopHoldLatched && !AutoWriter.StopHoldGuard.AllowsRealtime(cmd)')) 'realtime command refuses resume visibly'
 # candidate C wiring: boundary scan before feed-hold, drain allowance in the send loop
 Assert-True ($streamingCode.Contains('StrokeBoundary.LinesUntilBoundary(PeekUpcomingStreamLines')) 'wiring C: boundary scan on pause request'
 Assert-True ($streamingCode.Contains('pauseDrainRemaining = drainToBoundary')) 'wiring C: drain allowance set'
@@ -214,8 +233,15 @@ Assert-True  ($resumeCode.Contains('F1800')) 'wiring B: XY travel carries explic
 $userControlsCode = [IO.File]::ReadAllText((Join-Path $repoRoot 'GRBL-Plotter\GUI\MainFormUserControls.cs'))
 Assert-True ($userControlsCode.Contains('_serial_form.GrblReset(true); return;')) 'wiring I: flow-panel reset uses GrblReset(savePos)'
 
+$mainStreamingCode = [IO.File]::ReadAllText((Join-Path $repoRoot 'GRBL-Plotter\GUI\MainFormStreaming.cs'))
+$mainStartBody = $mainStreamingCode.Substring($mainStreamingCode.IndexOf('private void StartStreaming(int startLine, int endLine)'))
+Assert-True ($mainStartBody.IndexOf('_serial_form.IsStopHoldLatched') -lt $mainStartBody.IndexOf('isStreaming = true')) 'main start refuses retained stop before optimistic UI state'
+Assert-True ($mainStartBody.IndexOf('_serial_form.IsStopHoldLatched') -lt $mainStartBody.IndexOf('_serial_form.PauseStreaming()')) 'main resume refuses retained stop before restore'
+Assert-True ($mainStreamingCode.Contains('flowControlEnable && !_serial_form.IsStopHoldLatched')) 'stop flow code not scheduled while retained HOLD'
+Assert-Equal 2 ([regex]::Matches($serialFormCode, 'if \(stopHoldLatched && !AutoWriter.StopHoldGuard.AllowsLine\(tmp\)\) return false;').Count) 'both physical line-write transports recheck latch under lock'
+Assert-Equal 2 ([regex]::Matches($serialFormCode, 'if \(stopHoldLatched && \(b != 1 \|\| !AutoWriter.StopHoldGuard.AllowsRealtime\(tmp\[a\]\)\)\) return;').Count) 'both physical byte-write transports recheck latch under lock'
+
 $log.Add('')
-$log.Add('PASS: stream throttle caps in-flight lines at 4, feed-hold ''!'' is injected on pause/stop')
-$log.Add('only while connected and running, the pause settles on HOLD exactly once per request, and')
-$log.Add('resume/stop release the hold with ''~''. All wiring points are present in the shipping code.')
+$log.Add('PASS: throttle limits host acknowledgements; ordinary pause resumes; red stop retains HOLD,')
+$log.Add('blocks start/resume/queued commands, and clears only after a controller reset welcome.')
 [IO.File]::WriteAllLines((Join-Path $repoRoot 'artifacts\stage0\stream-throttle-test.txt'), $log)

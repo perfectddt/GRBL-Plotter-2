@@ -369,7 +369,7 @@ namespace GrblPlotter
                     SaveStreamingStatus(e.CodeLineSent, "Stop", "");
                     timerUpdateControls = true; timerUpdateControlSource = "grblStreaming.stop";// updateControls();
                     SetInfoLabel(Localization.GetString("mainInfoStopStream") + e.CodeLineSent.ToString() + ")", Color.Fuchsia);
-                    if (Properties.Settings.Default.flowControlEnable) // send extra Pause-Code in MainTimer_Tick from Properties.ListSettings.Default.flowControlText
+                    if (Properties.Settings.Default.flowControlEnable && !_serial_form.IsStopHoldLatched)
                         delayedSend = 2;
 
                     _process_form?.Feedback("G-Code Stream", "", false);
@@ -499,6 +499,14 @@ namespace GrblPlotter
 			if (_serial_form == null)
 			{	Logger.Error(" StartStreaming: 1st serial form is not available !!!"); return;}
 		
+            // Refuse before UI state, restore lines or progress are changed.
+            if (_serial_form.IsStopHoldLatched || (!isStreaming && Grbl.Status == GrblState.hold))
+            {
+                _serial_form.AddToLog(AutoWriter.StopHoldGuard.RefusalMessage);
+                SetInfoLabel(AutoWriter.StopHoldGuard.RefusalMessage, Color.Fuchsia);
+                return;
+            }
+
             Logger.Trace("startStreaming serialPortOpen:{0} ", _serial_form.SerialPortOpen);
             lblInfoOkString = Localization.GetString("mainInfoSendCode");
             notifierUpdateFlag = false;
