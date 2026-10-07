@@ -490,8 +490,11 @@ namespace GrblPlotter
                         {
                             if (!serialPortError)
                             {
-                                rtsrResponse++;                           // real time status report was sent  / will be decreased in processGrblMessages()      
-                                SerialPortDataSend("?");
+                                lock (sendDataLock)
+                                {
+                                    if (WritingQueryAllowed())
+                                    { rtsrResponse++; SerialPortDataSend("?"); }
+                                }
                                 if (useEthernet)
                                     EthernetDataReceive();
                             }
@@ -503,6 +506,7 @@ namespace GrblPlotter
                     serialPortError = true;
                     Logger.Error(err, "Ser:{0} GRBL status could not be queried (send ?) TimeoutException rtsrResponse:{1} ", iamSerial, rtsrResponse);
                     LogError("! GRBL status could not be queried " + rtsrResponse, err);
+                    CancelWritingControl();
                     ResetStreaming();
                     DisconnectFromGrbl(null, null);   // ClosePortSerial();
                 }
@@ -511,6 +515,7 @@ namespace GrblPlotter
                     serialPortError = true;
                     Logger.Error(err, "Ser:{0} GRBL status could not be queried (send ?) or (send M114) in TimerSerial_Tick ", iamSerial);
                     LogError("! GRBL status could not be queried " + rtsrResponse, err);
+                    CancelWritingControl();
                     ResetStreaming();
                     DisconnectFromGrbl(null, null);   // ClosePortSerial();
                 }
@@ -810,6 +815,7 @@ namespace GrblPlotter
         { DisconnectFromGrbl(null, null); }// ClosePortSerial(); }
         public void ClosePortSerial()
         {
+            CancelWritingControl();
             try
             {
                 if (serialPort.IsOpen)
@@ -895,6 +901,7 @@ namespace GrblPlotter
 
         private void StateReset(bool savePos)
         {
+            CancelWritingControl();
             if (savePos)
             { SaveLastPos(); }
             countStateReset = 10;
@@ -1125,7 +1132,9 @@ namespace GrblPlotter
                         lock (sendDataLock)
                         {
                             if (stopHoldLatched && (b != 1 || !AutoWriter.StopHoldGuard.AllowsRealtime(tmp[a]))) return;
+                            if (writingFlow.Enabled && b == 1 && tmp[a] == (byte)'?' && !WritingQueryAllowed()) return;
                             serialPort.Write(tmp, a, b);
+                            if (b == 1 && tmp[a] == (byte)'?') WritingQuerySent();
                         }
                         if (logStreamData) WriteLog(logFileSentData, tmp.ToString(), "1");
                         return;
@@ -1144,7 +1153,12 @@ namespace GrblPlotter
                         lock (sendDataLock)
                         {
                             if (stopHoldLatched && (b != 1 || !AutoWriter.StopHoldGuard.AllowsRealtime(tmp[a]))) return;
-                            if (Connection.CanWrite) Connection.Write(tmp, a, b);
+                            if (writingFlow.Enabled && b == 1 && tmp[a] == (byte)'?' && !WritingQueryAllowed()) return;
+                            if (Connection.CanWrite)
+                            {
+                                Connection.Write(tmp, a, b);
+                                if (b == 1 && tmp[a] == (byte)'?') WritingQuerySent();
+                            }
                         }
                         if (logStreamData) WriteLog(logFileSentData, tmp.ToString(), "2");
                     }
@@ -1192,7 +1206,9 @@ namespace GrblPlotter
                             lock (sendDataLock)
                             {
                                 if (stopHoldLatched && !AutoWriter.StopHoldGuard.AllowsLine(tmp)) return false;
+                                if (writingFlow.Enabled && tmp == "?" && !WritingQueryAllowed()) return false;
                                 serialPort.Write(tmp);
+                                if (tmp == "?") WritingQuerySent();
                             }
                             if (logStreamData && (tmp != "?")) WriteLog(logFileSentData, tmp, "3");
                             return true;
@@ -1230,7 +1246,12 @@ namespace GrblPlotter
                         lock (sendDataLock)
                         {
                             if (stopHoldLatched && !AutoWriter.StopHoldGuard.AllowsLine(tmp)) return false;
-                            if (Connection.CanWrite) Connection.Write(myWriteBuffer, 0, myWriteBuffer.Length);
+                            if (writingFlow.Enabled && tmp == "?" && !WritingQueryAllowed()) return false;
+                            if (Connection.CanWrite)
+                            {
+                                Connection.Write(myWriteBuffer, 0, myWriteBuffer.Length);
+                                if (tmp == "?") WritingQuerySent();
+                            }
                         }
                         if (logStreamData && (tmp != "?")) WriteLog(logFileSentData, tmp, "4");
                         return true;

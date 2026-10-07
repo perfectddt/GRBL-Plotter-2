@@ -80,6 +80,95 @@ namespace GrblPlotter.AutoWriter
             return lines.ToArray();
         }
 
+        /* R6 21:49: '~' resumes leftover planner XY while the pen is still down.
+         * Stock GRBL cannot insert a lift in front of a held block. Flush the
+         * controller from HOLD (already stopped) so Case A can lift first. */
+        public static bool ShouldFlushHoldLeftover(bool settledOnHold, bool penDown)
+        { return settledOnHold && penDown; }
+
+        /* After a leftover flush the tool is still at the pause point, but the
+         * interrupted G1 would otherwise be skipped (host confirm cursor is
+         * ahead of the tool). Resume the first XY segment that still contains
+         * the pause point. */
+        public static int FindInProgressLine(IList<string> lines, int confirmedCount,
+                                             double startX, double startY,
+                                             double pauseX, double pauseY)
+        {
+            if (lines == null || confirmedCount <= 0)
+                return 0;
+            int n = Math.Min(confirmedCount, lines.Count);
+            double x = startX, y = startY;
+            int resume = n;
+            for (int i = 0; i < n; i++)
+            {
+                double tx = x, ty = y;
+                if (!TryReadXY(lines[i], ref tx, ref ty))
+                    continue;
+                if (AlmostEqual(pauseX, tx) && AlmostEqual(pauseY, ty))
+                {
+                    resume = i + 1;
+                    x = tx; y = ty;
+                    continue;
+                }
+                if (PointOnSegment(pauseX, pauseY, x, y, tx, ty))
+                    return i;
+                x = tx; y = ty;
+            }
+            return Math.Min(resume, n);
+        }
+
+        public const double PositionTolMm = 0.5;
+
+        public static bool AlmostEqual(double a, double b)
+        { return Math.Abs(a - b) <= PositionTolMm; }
+
+        private static bool TryReadXY(string line, ref double x, ref double y)
+        {
+            if (string.IsNullOrEmpty(line))
+                return false;
+            string u = line.ToUpperInvariant();
+            bool got = false;
+            double xv, yv;
+            if (TryReadAxis(u, 'X', out xv)) { x = xv; got = true; }
+            if (TryReadAxis(u, 'Y', out yv)) { y = yv; got = true; }
+            return got;
+        }
+
+        private static bool TryReadAxis(string line, char axis, out double value)
+        {
+            value = 0;
+            int i = line.IndexOf(axis);
+            if (i < 0 || i + 1 >= line.Length)
+                return false;
+            int start = i + 1;
+            while (start < line.Length && line[start] == ' ')
+                start++;
+            int end = start;
+            if (end < line.Length && (line[end] == '-' || line[end] == '+'))
+                end++;
+            while (end < line.Length && (char.IsDigit(line[end]) || line[end] == '.'))
+                end++;
+            if (end <= start)
+                return false;
+            return double.TryParse(line.Substring(start, end - start), NumberStyles.Float,
+                CultureInfo.InvariantCulture, out value);
+        }
+
+        private static bool PointOnSegment(double px, double py,
+                                           double x0, double y0, double x1, double y1)
+        {
+            double dx = x1 - x0, dy = y1 - y0;
+            double len2 = dx * dx + dy * dy;
+            if (len2 < 1e-12)
+                return AlmostEqual(px, x0) && AlmostEqual(py, y0);
+            double t = ((px - x0) * dx + (py - y0) * dy) / len2;
+            if (t < -0.02 || t > 1.02)
+                return false;
+            double qx = x0 + t * dx, qy = y0 + t * dy;
+            double ddx = px - qx, ddy = py - qy;
+            return (ddx * ddx + ddy * ddy) <= PositionTolMm * PositionTolMm;
+        }
+
         /* Always invariant: a decimal comma would corrupt the command on any
          * locale that uses one (the old call sites needed Replace(',', '.') for
          * exactly this reason). */

@@ -1,4 +1,4 @@
-﻿/*  GRBL-Plotter. Another GCode sender for GRBL.
+/*  GRBL-Plotter. Another GCode sender for GRBL.
     This file is part of the GRBL-Plotter application.
    
     Copyright (C) 2015-2026 Sven Hasemann contact: svenhb@web.de
@@ -275,8 +275,14 @@ namespace GrblPlotter
             /***** grbl buffer processed *****/
             if (isOk)
             {
-                ProcessGrblOkMessage();
-                ProcessOkStreaming();                          // process all other messages
+                lock (sendDataLock)
+                {
+                    bool hasAck = sendBuffer.IndexConfirmed < sendBuffer.IndexSent;
+                    int ackTag = sendBuffer.GetConfirmedLineNr();
+                    if (writingFlow.Enabled && hasAck) writingFlow.Ack(ackTag, writingStatusReceipts + Math.Max(0, writingQueriesPending) + 1);
+                    ProcessGrblOkMessage();
+                    ProcessOkStreaming(hasAck && ackTag >= 0);
+                }                          // process all other messages
                 rxString = "";                              // clear if simulation is on
                 if (!isStreaming || isStreamingPause)
                 {
@@ -297,6 +303,21 @@ namespace GrblPlotter
             {
                 ProcessGrblRealTimeStatus(rxString.Trim(charsToTrim));  // https://github.com/gnea/grbl/wiki/Grbl-v1.1-Interface#real-time-status-reports
                 ProcessGrblPositionUpdate();
+                lock (sendDataLock)
+                {
+                    writingStatusReceipts++;
+                    if (writingQueriesPending > 0) writingQueriesPending--;
+                    writingLastRawStatus = rxString;
+                    writingLastStatusAt = DateTime.UtcNow;
+                    if (writingFlow.Enabled && !writingMotion.Report(rxString, grblStateNow == GrblState.idle, grblStateNow == GrblState.run))
+                        CancelWritingControl();
+                    ProcessWritingStatus();
+                    if (writingResumeRequested && IsWritingPaused)
+                        PauseStreaming(); // Retry the requested resume using this report's fresh credit.
+                    // Consume this report's credit before the timer issues the next query.
+                    if (writingFlow.Enabled && isStreaming && !isStreamingPause && !isStreamingRequestPause)
+                        PreProcessStreaming();
+                }
                 ProcessGrblStateChange();
                 rtsrResponse--;                             			// real time status report received                    			
                 if (cBStatus.Checked) AddToLog(rxString);
@@ -628,6 +649,11 @@ namespace GrblPlotter
                     if (countPreventIdle <= 1) waitForIdle = false;
                     countPreventInterlock = 50;
 
+                    if (resumeFlushWaitingIdle && isStreamingPause)
+                    {
+                        FinishHoldFlushResume();
+                    }
+
                     // AutoWriter: close the loop opened by the 「解锁」 button. Pressing '$X' by hand
                     // only unlocks the controller - the operator still had to press 「检查GRBL」 to get
                     // the settings that candidate I-a skips while in ALARM. This fires that read on the
@@ -643,6 +669,11 @@ namespace GrblPlotter
                         AddToLog(AlarmUnlock.LogSettingsRecovered);
                         ReadSettings();
                     }
+                }
+                else if (resumeFlushWaitingIdle && (grblStateNow == GrblState.alarm) && isStreamingPause)
+                {
+                    AddToLog("[Resume flush: ALARM after reset, sending $X]");
+                    RequestSend(AlarmUnlock.UnlockCommand);
                 }
                 /* 2026-10-06 candidate E/F: after the pause/stop feed-hold '!', the controller
                  * reports HOLD and never reaches IDLE by itself. Settle the software pause on
@@ -663,6 +694,35 @@ namespace GrblPlotter
         /* 2023-03-30 invert version assumption: expect vers 1.x until 0.x is read */
         private void ProcessGrblWelcomeMessage(string rxStringTmp)
         {
+            EndWritingControl();
+            writingQueriesPending = 0;
+            bool keepStream = resumeFlushKeepStream && isStreaming;
+            if (keepStream)
+            {
+                resumeFlushKeepStream = false;
+                resumeFlushWaitingIdle = true;
+                lock (sendDataLock)
+                {
+                    sendBuffer.Clear();
+                    grblBufferFree = grblBufferSize;
+                }
+                AddToLog("[Resume flush: leftover planner cleared, stream kept]");
+                AddToLog("* RESET (keep stream)\r\n< " + rxStringTmp);
+                countMissingStatusReport = 10;
+                waitForIdle = false;
+                waitForOk = false;
+                countStateReset = 8;
+                rxErrorCount = 0;
+                timerSerial.Enabled = true;
+                if (rxStringTmp.ToLower().IndexOf("grbl 0") >= 0)
+                    IsGrblVers0 = true;
+                if (rxStringTmp.ToLower().IndexOf("grbl 1") >= 0)
+                    IsGrblVers0 = false;
+                Logger.Info("RESET_grbl keep-stream: '{0}'", rxStringTmp);
+                UpdateControls();
+                return;
+            }
+
             bool stream = isStreaming;
             bool retainedStop = stopHoldLatched;
             // A received controller welcome confirms that its planner was reset. Host bookkeeping,
@@ -860,6 +920,7 @@ namespace GrblPlotter
         /***** process [ALARM... *****/
         private void ProcessGrblAlarmMessage(string rxStringTmp)
         {
+            CancelWritingControl();
             waitForOk = false;
             waitForIdle = false;
             lastError = "";
@@ -889,6 +950,7 @@ namespace GrblPlotter
         /***** process [ERROR... *****/
         private void ProcessGrblErrorMessage(string rxStringTmp)
         {
+            CancelWritingControl();
             waitForOk = false;
             waitForIdle = false;
             string errNr = Grbl.GetMsgNr(rxStringTmp);
@@ -994,6 +1056,8 @@ namespace GrblPlotter
         /***** Send real time command immediately *****/
         public void RealtimeCommand(byte cmd)
         {
+            if (writingFlow.Enabled && (cmd == (byte)'!' || cmd == 0x18 || cmd == 0x85)) CancelWritingControl();
+            if (writingFlow.BlocksProgram && cmd == (byte)'~') return;
             if (stopHoldLatched && !AutoWriter.StopHoldGuard.AllowsRealtime(cmd))
             {
                 AddToLog(AutoWriter.StopHoldGuard.RefusalMessage);
@@ -1021,6 +1085,11 @@ namespace GrblPlotter
         { return RequestSend(data, 0, keepComments); }
         public bool RequestSend(string data, int lineNr, bool keepComments)
         {
+            if (writingFlow.BlocksManual)
+            {
+                AddToLog("[Writing control: manual commands blocked until completion/reset]");
+                return false;
+            }
             if (stopHoldLatched)
             {
                 if (!AutoWriter.StopHoldGuard.AllowsLine(data))
@@ -1198,7 +1267,7 @@ namespace GrblPlotter
         private readonly string[] eeprom2 = { "G10", "G28", "G30" };
         public void ProcessSend()
         {
-            if (stopHoldLatched) return;
+            if (stopHoldLatched || (writingFlow.Enabled && writingFlow.State == AutoWriter.WritingFlowControl.Phase.Fault)) return;
             // Logger.Trace("processSend grblBufferFree:{0}  waitForIdle:{1}", grblBufferFree, waitForIdle);
             // OkToSend = grblBufferFree >= buffer[sent].Length + 1
 
@@ -1306,8 +1375,17 @@ namespace GrblPlotter
                         {
                             lock (sendDataLock)
                             {
+                                if (stopHoldLatched || (writingFlow.Enabled && writingFlow.State == AutoWriter.WritingFlowControl.Phase.Fault)) break;
                                 line = sendBuffer.GetSentLine();    // needed?
                                 int sendLength = (line.Length + 1);
+                                bool writingPair = writingFlow.Enabled && AutoWriter.WritingMotionBudget.IsPenDown(line);
+                                string pairedXY = writingPair ? sendBuffer.PeekLine(sendBuffer.IndexSent + 1) : "";
+                                double pairX, pairY, pairFeed;
+                                if (writingPair)
+                                {
+                                    if (!AutoWriter.WritingMotionBudget.TryXY(pairedXY, out pairX, out pairY, out pairFeed)) break;
+                                    sendLength += pairedXY.Length + 1;
+                                }
                                 if (line.StartsWith("$J"))          // sort out jog command
                                 { }
                                 else if (line.StartsWith("$"))
@@ -1318,12 +1396,14 @@ namespace GrblPlotter
                                 if (isConnected && (grblBufferFree >= sendLength) && (line != "OV") && (!waitForOk))// && !blockSend)
                                 {
                                     /***** Send data to 1st grbl *****************************/
-                                    if (SerialPortDataSend(line + lineEndTXgrbl))         // grbl accepts '\n' or '\r'			
+                                    if (SerialPortDataSend(writingPair ? AutoWriter.WritingMotionBudget.PenDownPacket(line, pairedXY, lineEndTXgrbl)
+                                        : line + lineEndTXgrbl))         // grbl accepts '\n' or '\r'
                                     {
                                         grblBufferFree -= sendLength;
                                         if (!grblCharacterCounting)
                                             grblBufferFree = 0;
                                         sendBuffer.LineWasSent();       // RX in 189
+                                        if (writingPair) sendBuffer.LineWasSent();
                                         if (logTransmit || cBStatus1.Checked || cBStatus.Checked) Logger.Trace("s{0} TX:{1,-20} length:{2,2}  BufferFree:{3,3}  Index:{4,3}  max:{5,3}  lineNr:{6}", iamSerial, "'" + line + "'", sendLength, grblBufferFree, sendBuffer.IndexSent, sendBuffer.Count, sendBuffer.GetSentLineNr());
                                     }
                                     else
@@ -1380,6 +1460,7 @@ namespace GrblPlotter
                     else
                     {
                         AddToLog(line + " !!! Port is closed !!! ");
+                        CancelWritingControl();
                         ResetStreaming();   // ALARM
                         break;
                     }

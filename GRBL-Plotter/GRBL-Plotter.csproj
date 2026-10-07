@@ -489,6 +489,8 @@
     <Compile Include="AutoWriter\ResetGuard.cs" />
     <Compile Include="AutoWriter\SoftwareDatum.cs" />
     <Compile Include="AutoWriter\ResumeRestore.cs" />
+    <Compile Include="AutoWriter\WritingFlowControl.cs" />
+    <Compile Include="AutoWriter\WritingMotionBudget.cs" />
     <Compile Include="AutoWriter\StreamThrottle.cs" />
     <Compile Include="AutoWriter\PauseMoveGuard.cs" />
     <Compile Include="AutoWriter\StrokeBoundary.cs" />
@@ -500,7 +502,14 @@
     <Compile Include="AutoWriter\Services\MotionCalibrationService.cs" />
     <Compile Include="AutoWriter\Services\BuiltinGlyphLibrary.cs" />
     <Compile Include="AutoWriter\Services\TextLayoutService.cs" />
+    <Compile Include="AutoWriter\Services\GlyphFontPackService.cs" />
     <Compile Include="AutoWriter\Services\WritingProgramService.cs" />
+    <Content Include="AutoWriter\Fonts\*.fontpack.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="AutoWriter\Fonts\LICENSE-arphic.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="MachineControl\ControlSerialForm.cs">

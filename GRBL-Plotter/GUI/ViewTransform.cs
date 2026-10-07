@@ -40,6 +40,21 @@ namespace GrblPlotter
 {
     public sealed class ViewTransform
     {
+        private readonly bool defaultMirrorY;
+
+        public ViewTransform() : this(false) { }
+
+        public ViewTransform(bool defaultMirrorY)
+        {
+            this.defaultMirrorY = defaultMirrorY;
+            Reset();
+        }
+
+        public bool IsDefault
+        {
+            get { return !MirrorX && MirrorY == defaultMirrorY && QuarterTurns == 0; }
+        }
+
         /// <summary>Mirror about the vertical centre line (left and right swap).</summary>
         public bool MirrorX { get; private set; }
 
@@ -66,6 +81,21 @@ namespace GrblPlotter
 
         public void ToggleMirrorX() { MirrorX = !MirrorX; }
 
+        /// <summary>Map a telephone-keypad anchor in the visible view to the code's Y-up bounds.</summary>
+        public int MapViewAnchorToWorld(int anchor)
+        {
+            if (anchor < 1 || anchor > 9) return anchor;
+            PointF[] point = { new PointF((anchor - 1) % 3 - 1, 1 - (anchor - 1) / 3) };
+            using (Matrix matrix = BuildMatrix(0, 0))
+            {
+                matrix.Invert();
+                matrix.TransformPoints(point);
+            }
+            int column = (int)System.Math.Round(point[0].X) + 1;
+            int row = 1 - (int)System.Math.Round(point[0].Y);
+            return row * 3 + column + 1;
+        }
+
         public void ToggleMirrorY() { MirrorY = !MirrorY; }
 
         public void RotateClockwise() { QuarterTurns = (QuarterTurns + 1) % 4; }
@@ -75,7 +105,7 @@ namespace GrblPlotter
         public void Reset()
         {
             MirrorX = false;
-            MirrorY = false;
+            MirrorY = defaultMirrorY;
             QuarterTurns = 0;
         }
 
@@ -109,10 +139,10 @@ namespace GrblPlotter
             if (IsIdentity) return matrix;
 
             matrix.Translate(-centerX, -centerY);
-            if (QuarterTurns % 4 != 0)
-                matrix.Rotate(-QuarterTurns * 90f, MatrixOrder.Append);
             if (MirrorX || MirrorY)
                 matrix.Scale(MirrorX ? -1f : 1f, MirrorY ? -1f : 1f, MatrixOrder.Append);
+            if (QuarterTurns % 4 != 0)
+                matrix.Rotate(-QuarterTurns * 90f, MatrixOrder.Append);
             matrix.Translate(centerX, centerY, MatrixOrder.Append);
             return matrix;
         }

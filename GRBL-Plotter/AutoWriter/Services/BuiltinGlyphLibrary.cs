@@ -39,6 +39,22 @@ namespace GrblPlotter.AutoWriter.Services
         public static string AvailableSymbols
         { get { return "工 王 一（空格=空移）"; } }
 
+        /// <summary>True when the built-in library can resolve the character itself
+        /// (space included). Used by the font-selector chain precheck.</summary>
+        public static bool Knows(char symbol)
+        {
+            switch (symbol)
+            {
+                case '工':
+                case '王':
+                case '一':
+                case ' ':
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         public static BuiltinGlyph Resolve(char symbol)
         {
             switch (symbol)

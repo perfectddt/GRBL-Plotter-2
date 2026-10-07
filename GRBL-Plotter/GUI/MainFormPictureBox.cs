@@ -117,7 +117,8 @@ namespace GrblPlotter
         // line the picture up with the sheet on the machine; it never touches the G-code, the sent
         // program or any stored coordinate. While it is off the identity the view is drawn exactly
         // as before, so an untouched installation behaves unchanged.
-        private readonly ViewTransform viewTransform = new ViewTransform();
+        // Factory-compatible machine +Y points down on the paper. Reflect the display only.
+        private readonly ViewTransform viewTransform = new ViewTransform(true);
 
         private readonly bool logSelection = false;  //true;
 
@@ -1653,7 +1654,7 @@ namespace GrblPlotter
             ToolStripMenuItem rotateCounterClockwise = new ToolStripMenuItem("逆时针旋转 90°（仅显示）");
             rotateCounterClockwise.Click += (sender, args) => { viewTransform.RotateCounterClockwise(); ApplyViewOrientationChange(); };
 
-            viewOrientationReset = new ToolStripMenuItem("重置视图方向");
+            viewOrientationReset = new ToolStripMenuItem("重置视图方向（默认上下翻转）");
             viewOrientationReset.Click += (sender, args) => { viewTransform.Reset(); ApplyViewOrientationChange(); };
 
             viewToolStripMenuItem.DropDownItems.Add(new ToolStripSeparator());
@@ -1672,7 +1673,7 @@ namespace GrblPlotter
             if (viewOrientationMirrorX == null) return;
             viewOrientationMirrorX.Checked = viewTransform.MirrorX;
             viewOrientationMirrorY.Checked = viewTransform.MirrorY;
-            viewOrientationReset.Enabled = !viewTransform.IsIdentity;
+            viewOrientationReset.Enabled = !viewTransform.IsDefault;
         }
 
         /// <summary>

@@ -1,4 +1,4 @@
-﻿/*  GRBL-Plotter. Another GCode sender for GRBL.
+/*  GRBL-Plotter. Another GCode sender for GRBL.
     This file is part of the GRBL-Plotter application.
    
     Copyright (C) 2015-2026 Sven Hasemann contact: svenhb@web.de
@@ -64,6 +64,137 @@ namespace GrblPlotter
          * 1. startStreaming() copy and filter gcode to streamingBuffer
          * 2. preProcessStreaming() to copy data to sendBuffer for sending if grblBuffer (grblBufferFree) has enough space
          ************************************************************************************************************/
+        private readonly AutoWriter.WritingFlowControl writingFlow = new AutoWriter.WritingFlowControl();
+        private readonly AutoWriter.WritingMotionBudget writingMotion = new AutoWriter.WritingMotionBudget();
+        private string writingLastRawStatus = "";
+        private DateTime writingLastStatusAt = DateTime.MinValue;
+        private double writingSplitX, writingSplitY;
+        private XyzPoint writingPauseMachine = new XyzPoint();
+        private XyzPoint writingPauseWork = new XyzPoint();
+        private long writingStatusReceipts;
+        private int writingQueriesPending;
+        private bool orderedWritingStopCompleted;
+        private double writingOffsetX, writingOffsetY, writingOffsetZ;
+        private bool writingResumeRequested;
+        public bool IsWritingPaused { get { return writingFlow.Enabled && writingFlow.State == AutoWriter.WritingFlowControl.Phase.Paused; } }
+        public bool IsWritingControlActive { get { return writingFlow.Enabled; } }
+        public bool IsStreaming { get { return isStreaming; } }
+        public bool IsWritingControlPending { get { return writingFlow.Enabled && (writingFlow.State == AutoWriter.WritingFlowControl.Phase.Pausing
+            || writingFlow.State == AutoWriter.WritingFlowControl.Phase.Stopping || writingFlow.State == AutoWriter.WritingFlowControl.Phase.Fault); } }
+        public bool SuppressWritingFlowCode { get { return writingFlow.Enabled || orderedWritingStopCompleted; } }
+
+        private bool WritingSafe()
+        {
+            return IsConnectedToGrbl() && !stopHoldLatched && !isMarlin && !isStreamingCheck
+                && (grblStateNow == GrblState.run || grblStateNow == GrblState.idle);
+        }
+        private void QueueWritingControl(string line, int tag) { sendBuffer.Add(line.Replace(" ", ""), tag); }
+        private void EndWritingControl()
+        {
+            writingResumeRequested = false;
+            if (writingFlow.Enabled)
+            {
+                timerSerial.Interval = Grbl.pollInterval;
+                countMissingStatusReport = (int)(10000 / timerSerial.Interval);
+            }
+            writingFlow.End();
+        }
+        private void CancelWritingControl()
+        {
+            writingResumeRequested = false;
+            lock (sendDataLock)
+            {
+                if (!writingFlow.Enabled || (writingFlow.State == AutoWriter.WritingFlowControl.Phase.Fault && stopHoldLatched)) return;
+                writingFlow.Cancel();
+                stopHoldLatched = true;
+                isStreamingRequestPause = true;
+                pauseDrainRemaining = 0;
+                if (IsConnectedToGrbl() && grblStateNow == GrblState.run)
+                    SerialPortDataSend(new byte[] { (byte)'!' }, 0, 1);
+                AddToLog("[Writing control cancelled: retained emergency HOLD; reset welcome required, no automatic recovery]");
+            }
+        }
+        private void ProcessWritingStatus()
+        {
+            lock (sendDataLock)
+            {
+                if (!writingFlow.Enabled) return;
+                bool unsafeState = !WritingSafe();
+                if (unsafeState) { CancelWritingControl(); return; }
+                if ((!Gcode.IsEqual(posMachine.X - posWork.X, writingOffsetX)
+                    || !Gcode.IsEqual(posMachine.Y - posWork.Y, writingOffsetY)
+                    || !Gcode.IsEqual(posMachine.Z - posWork.Z, writingOffsetZ)))
+                { CancelWritingControl(); return; }
+                if (grblStateNow == GrblState.idle && streamingBuffer.IndexConfirmed >= streamingBuffer.Count
+                    && writingFlow.CanFinish(sendBuffer.IndexConfirmed == sendBuffer.Count, writingStatusReceipts))
+                { StreamingFinish(); return; }
+                bool completed = writingFlow.Status(grblStateNow == GrblState.idle, false,
+                    sendBuffer.IndexConfirmed == sendBuffer.Count && streamingBuffer.IndexConfirmed == streamingBuffer.IndexSent, writingStatusReceipts);
+                if (!completed) return;
+                if (writingFlow.State == AutoWriter.WritingFlowControl.Phase.Stopped)
+                {
+                    orderedWritingStopCompleted = true;
+                    EndWritingControl();
+                    StopStreamingFinal();
+                }
+                else
+                {
+                    writingPauseMachine = posMachine; writingPauseWork = posWork;
+                    posPause = posWork;
+                    isStreamingPause = true;
+                    streamingStateNow = GrblStreaming.pause;
+                    SendStreamEvent(GrblStreaming.pause);
+                    UpdateControls();
+                    AddToLog("[Writing paused: pen-up ACK and fresh Idle received; sent motion completed]");
+                }
+            }
+        }
+        // One outstanding query. Only a query issued after ALL ACKs may replenish motion credit.
+        private bool WritingQueryAllowed()
+        {
+            if (!writingFlow.Enabled) return true;
+            if ((DateTime.UtcNow - writingLastStatusAt).TotalSeconds > 2) { CancelWritingControl(); return false; }
+            return writingQueriesPending == 0;
+        }
+        private void WritingQuerySent()
+        {
+            writingQueriesPending++;
+            if (writingFlow.Enabled) writingMotion.QuerySent(sendBuffer.IndexConfirmed == sendBuffer.Count);
+        }
+        private void PreProcessWritingMotion()
+        {
+            lock (sendDataLock)
+            {
+                if (stopHoldLatched || writingFlow.BlocksProgram || isStreamingRequestPause || waitForIdle) return;
+                while (streamingBuffer.IndexSent < streamingBuffer.Count)
+                {
+                    string line = streamingBuffer.GetSentLine();
+                    bool pair = AutoWriter.WritingMotionBudget.IsPenDown(line);
+                    // Resume's control Z5 is already at the unsent tail; reserve it with this XY.
+                    bool resumePair = AutoWriter.WritingMotionBudget.IsPenDown(sendBuffer.GetSentLine());
+                    int blocks = AutoWriter.WritingMotionBudget.IsMotion(line) ? 1 : 0;
+                    int length = line.Length + 1;
+                    string next = pair ? streamingBuffer.PeekLine(streamingBuffer.IndexSent + 1) : "";
+                    double x, y, feed;
+                    if (pair && !AutoWriter.WritingMotionBudget.TryXY(next, out x, out y, out feed))
+                    { CancelWritingControl(); return; }
+                    if (pair) { blocks++; length += next.Length + 1; }
+                    if (resumePair) { blocks++; length += sendBuffer.GetSentLine().Length + 1; }
+                    if (grblBufferFree < length || !writingMotion.Reserve(blocks,
+                        (pair || resumePair) ? AutoWriter.WritingMotionBudget.SliceSeconds + 0.03
+                        : blocks == 0 ? 0 : line.Contains("X") ? AutoWriter.WritingMotionBudget.SliceSeconds : 0.03)) break;
+                    sendBuffer.Add(line, streamingBuffer.GetSentLineNr());
+                    streamingBuffer.LineWasSent(); writingFlow.ProgramQueued(line);
+                    if (pair)
+                    {
+                        sendBuffer.Add(next, streamingBuffer.GetSentLineNr());
+                        streamingBuffer.LineWasSent(); writingFlow.ProgramQueued(next);
+                    }
+                    ProcessSend(); // outer lock keeps the entire Z5/XY bundle atomic against pause/stop.
+                    if (sendBuffer.IndexSent < sendBuffer.Count) break;
+                }
+            }
+        }
         private bool allowStreamingEvent = true;
         private readonly CodeBuffer streamingBuffer = new CodeBuffer();
 
@@ -73,6 +204,11 @@ namespace GrblPlotter
         // A software stop cannot clear GRBL's planner. Keep HOLD until a controller welcome confirms reset.
         private volatile bool stopHoldLatched = false;
         public bool IsStopHoldLatched { get { return stopHoldLatched; } }
+        /* HOLD + pen down: 0x18 flushes leftover XY so Case A can lift first. Welcome
+         * must not ResetStreaming; Idle then sends the 4-line restore. */
+        private bool resumeFlushKeepStream = false;
+        private bool resumeFlushWaitingIdle = false;
+        private XyzPoint posStreamOrigin = new XyzPoint();
         /* 2026-10-06 candidate C: >0 while a pause drains the last few lines up to a stroke
          * boundary (pen-up Z0). 0 means the send loop blocks as soon as a pause is requested. */
         private int pauseDrainRemaining = 0;
@@ -107,6 +243,13 @@ namespace GrblPlotter
         ****************************************************************************/
         public void StartStreaming(IList<string> gCodeList, int startAtLine, int stopAtLine, bool check)
         {
+            if (gCodeList.Any(line => line.Trim() == "; Continuous pen motion required: keep pen-down and drawing queued; do not wait for Idle between blocks."))
+                gCodeList = gCodeList.Select(AutoWriter.WritingFlowControl.NormalizeWritingLine).ToList();
+            if (writingFlow.Enabled) { AddToLog("[Writing job active: finish or reset before starting another job]"); return; }
+            if (!check && !isMarlin && gCodeList.Any(line => line.Trim() == "; Continuous pen motion required: keep pen-down and drawing queued; do not wait for Idle between blocks.")
+                && !AutoWriter.WritingFlowControl.IsWritingProgram(gCodeList))
+            { AddToLog("[Writing start refused: generated program requires explicit G21 G90 G94 G54 and valid XY feeds]"); return; }
+            orderedWritingStopCompleted = false;
             if (stopHoldLatched)
             {
                 AddToLog(AutoWriter.StopHoldGuard.RefusalMessage);
@@ -188,6 +331,9 @@ namespace GrblPlotter
             else
                 AddToLog("[Start code check]");
             SaveLastPos();
+            posStreamOrigin = posWork;
+            resumeFlushKeepStream = false;
+            resumeFlushWaitingIdle = false;
             if (replaceFeedRate)
                 AddToLog("!!! Override Feed Rate");
             if (replaceSpindleSpeed)
@@ -199,7 +345,31 @@ namespace GrblPlotter
             streamingStateNow = GrblStreaming.ok;
 
             streamingBuffer.Clear();    // on start streaming
+            bool writingStartHostEmpty = sendBuffer.IndexConfirmed == sendBuffer.Count;
             ResetStreaming();           // startStreaming
+            writingFlow.Begin(gCodeList, !check && !isMarlin && startAtLine == 0 && !useSerial2 && !useSerial3
+                && !replaceFeedRate && !replaceSpindleSpeed);
+            if (writingFlow.Enabled)
+            {
+                int plannerFree;
+                if (!writingStartHostEmpty || grblStateNow != GrblState.idle || mParserState.coord_select != 54
+                    || (DateTime.UtcNow - writingLastStatusAt).TotalSeconds > 2
+                    || !AutoWriter.WritingMotionBudget.TryPlannerFree(writingLastRawStatus, out plannerFree)
+                    || plannerFree < AutoWriter.WritingMotionBudget.MaxBlocks)
+                {
+                    EndWritingControl(); AddToLog("[Writing start refused: need fresh Idle Bf and confirmed G54 work position]"); return;
+                }
+                writingMotion.Begin(plannerFree);
+                writingSplitX = posWork.X; writingSplitY = posWork.Y;
+                writingOffsetX = posMachine.X - posWork.X; writingOffsetY = posMachine.Y - posWork.Y;
+                writingOffsetZ = posMachine.Z - posWork.Z;
+                grblCharacterCounting = true;
+                timerSerial.Interval = 50;
+                countMissingStatusReport = 200;
+            }
+            AddToLog(writingFlow.Enabled
+                ? "[AutoWriter ordered pen-up pause enabled; red stop returns to declared work origin when supported; raw ! is emergency HOLD]"
+                : "[Ordered writing pen-up control unavailable: standard pause/retained emergency stop semantics apply]");
             if (isStreamingCheck)
             {
                 SendLine("$C");         // startStreaming check
@@ -350,7 +520,18 @@ namespace GrblPlotter
                                 { tmp = "(" + tmp + ")"; }      // hide M30
                             }
 
-                            streamingBuffer.Add(tmp.Replace(" ", ""), i);        // add gcode line to list to send
+                            if (writingFlow.Enabled)
+                            {
+                                try
+                                {
+                                    foreach (string slice in AutoWriter.WritingMotionBudget.Split(tmp.Replace(" ", ""),
+                                        ref writingSplitX, ref writingSplitY, AutoWriter.WritingMotionBudget.MaxExpandedLines - streamingBuffer.Count))
+                                        streamingBuffer.Add(slice, i);
+                                }
+                                catch (ArgumentException ex)
+                                { EndWritingControl(); streamingBuffer.Clear(); AddToLog("[Writing start refused: " + ex.Message + "]"); timerSerial.Start(); return; }
+                            }
+                            else streamingBuffer.Add(tmp.Replace(" ", ""), i);        // add gcode line to list to send
 
                             if (cmdMNr == 30)                   // stop filling buffer, to avoid sending subroutine code
                             {
@@ -540,6 +721,56 @@ namespace GrblPlotter
          ************************************************************************/
         public void PauseStreaming()
         {
+            if (writingFlow.Enabled)
+            {
+                lock (sendDataLock)
+                {
+                    if (writingFlow.State == AutoWriter.WritingFlowControl.Phase.Paused)
+                    {
+                        bool unchanged = Gcode.IsEqual(posWork.X, writingPauseWork.X) && Gcode.IsEqual(posWork.Y, writingPauseWork.Y)
+                            && Gcode.IsEqual(posWork.Z, writingPauseWork.Z) && Gcode.IsEqual(posMachine.X, writingPauseMachine.X)
+                            && Gcode.IsEqual(posMachine.Y, writingPauseMachine.Y) && Gcode.IsEqual(posMachine.Z, writingPauseMachine.Z);
+                        string next = streamingBuffer.PeekLine(streamingBuffer.IndexSent);
+                        bool xyNext = next.StartsWith("G1") && next.Contains("X") && next.Contains("Y") && next.Contains("F");
+                        if (WritingSafe() && unchanged && xyNext && writingFlow.SavedPenDown
+                            && (!writingMotion.Reserve(2, AutoWriter.WritingMotionBudget.SliceSeconds + 0.03)
+                                || grblBufferFree < next.Length + 1 + "G90G1Z5F10000".Length + 1))
+                        { writingResumeRequested = true; AddToLog("[Writing resume waits for fresh planner credit; pen remains raised]"); return; }
+                        writingResumeRequested = false;
+                        if (!writingFlow.Resume(WritingSafe() && unchanged, xyNext, QueueWritingControl))
+                        {
+                            if (writingFlow.State == AutoWriter.WritingFlowControl.Phase.Fault) CancelWritingControl();
+                            AddToLog("[Writing resume blocked: remaining path or coordinate frame changed]");
+                            return;
+                        }
+                        isStreamingPause = false; isStreamingRequestPause = false;
+                        streamingStateNow = GrblStreaming.ok;
+                        waitForIdle = false; waitForOk = false;
+                        if (writingFlow.SavedPenDown)
+                        {
+                            sendBuffer.Add(next, streamingBuffer.GetSentLineNr());
+                            streamingBuffer.LineWasSent(); writingFlow.ProgramQueued(next);
+                            ProcessSend(); // Z5 and exactly the next slice are sent as one bundle.
+                        }
+                        PreProcessStreaming(); // Z5 and original next XY remain consecutively queued, no Idle barrier.
+                        SendStreamEvent(GrblStreaming.ok);
+                    }
+                    else if (writingFlow.State == AutoWriter.WritingFlowControl.Phase.Running)
+                    {
+                        if (!WritingSafe()) { CancelWritingControl(); return; }
+                        isStreamingRequestPause = true; pauseDrainRemaining = 0;
+                        writingOffsetX = posMachine.X - posWork.X;
+                        writingOffsetY = posMachine.Y - posWork.Y; writingOffsetZ = posMachine.Z - posWork.Z;
+                        writingFlow.Pause(true, QueueWritingControl);
+                        streamingStateNow = GrblStreaming.waitidle;
+                        AddToLog("[Writing pause pending: stop new slices, queue Z0 after bounded sent motion; wait for lift ACK and fresh Idle]");
+                    }
+                    // Pending clicks are idempotent; only Stop may upgrade the transaction.
+                    ProcessSend();
+                }
+                UpdateControls();
+                return;
+            }
             if (stopHoldLatched)
             {
                 AddToLog(AutoWriter.StopHoldGuard.RefusalMessage);
@@ -580,59 +811,31 @@ namespace GrblPlotter
             }
             // restart streaming			
             else
-            {   //if ((posPause.X != posWork.X) || (posPause.Y != posWork.Y) || (posPause.Z != posWork.Z))
+            {
+                if (resumeFlushKeepStream || resumeFlushWaitingIdle)
+                {
+                    AddToLog("[Resume flush already in progress]");
+                    return;
+                }
                 AddToLog("++++++++++++++++++++++++++++++++++++");
+                bool flushLeftover = AutoWriter.ResumeRestore.ShouldFlushHoldLeftover(
+                    grblStateNow == GrblState.hold, AutoWriter.ResumeRestore.IsPenDown(posPause.Z));
+                if (flushLeftover)
+                {
+                    AddToLog("[Resume: flush leftover planner, then lift-travel-repress]");
+                    resumeFlushKeepStream = true;
+                    RealtimeCommand((byte)0x18);
+                    return;
+                }
                 /* 2026-10-06 candidate E: if the pause settled on HOLD (feed-hold path), release
-                 * the hold BEFORE the restore lines - motion queued while holding would not run. */
+                 * the hold BEFORE the restore lines - motion queued while holding would not run.
+                 * Pen-down HOLD must NOT take this path: leftover XY would drag before Z0. */
                 if (AutoWriter.StreamThrottle.ShouldReleaseHold(grblStateNow == GrblState.hold))
                 {
                     AddToLog("[Release hold ~ - resume motion]");
                     RealtimeCommand((byte)'~');
                 }
-                timerSerial.Interval = Grbl.pollInterval;
-                if (parserStateGC.Contains("F0"))
-                {
-                    parserStateGC = parserStateGC.Replace("F0", "F100");            // Avoid missing feed rate
-                    AddToLog(string.Format("[Fix F0: {0}]", parserStateGC));
-                }
-
-                bool xyMoved = !Gcode.IsEqual(posPause.X, posWork.X) || !Gcode.IsEqual(posPause.Y, posWork.Y);
-                bool zMoved = !Gcode.IsEqual(posPause.Z, posWork.Z);
-                if (xyMoved)	// restore position
-                {
-                    if (logStartStop) Logger.Trace("AlmostEqual posPause X{0:0.000} Y{1:0.000}  posWork X{2:0.000} Y{3:0.000}", posPause.X, posPause.Y, posWork.X, posWork.Y);
-                    AddToLog("[Restore Position]");
-                    if (logStartStop) Logger.Trace("[Restore] X{0:0.000} Y{1:0.000}  State:{2}", posPause.X, posPause.Y, parserStateGC);
-                }
-
-                /* 2026-10-06 candidate K (R6 rerun with pen): a software pause always outlasts the
-                 * pen's spring-back (~0.5 s, machine rule: a standalone Z5 rebounds), so the physical
-                 * pen is UP while grbl still has Z=5 on its books. Re-pressing with G0 Z5 is then a
-                 * zero-length move that grbl drops - the servo never fires and the first stroke after
-                 * resume draws air (paper: top horizontal of 工4 missing right at the resume point).
-                 * The sequence itself lives in AutoWriter/ResumeRestore.cs, unit-tested offline. */
-                if (AutoWriter.ResumeRestore.IsPenDown(posPause.Z))
-                    AddToLog(string.Format("[Restore Pen Z0->Z{0:0.###} re-press]", posPause.Z));
-                foreach (string line in AutoWriter.ResumeRestore.BuildLines(xyMoved, zMoved, posPause.X, posPause.Y, posPause.Z))
-                    RequestSend(line);
-
-                AddToLog(string.Format("[Start streaming line:{0} - no echo]", streamingBuffer.GetSentLineNr()));
-                //       AddToLog("[Restore ListSettings: "+ parserStateGC+" ]");
-                Logger.Info("▲▼▲▼▲ pauseStreaming start streaming ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼");
-                streamingStateNow = GrblStreaming.ok;
-
-                if (parserStateGC.Length > 0)
-                {
-                    AddToLog("[Restore Settings: " + parserStateGC + " ]");     // [GC:G0 G54 G17 G21 G90 G94 M5 M9 T0 F0.0 S0]
-                    RequestSend(parserStateGC);
-                }
-
-                waitForIdle = false;
-                waitForOk = false;
-                isStreamingPause = false;
-                isStreamingRequestPause = false;
-
-                PreProcessStreaming();              // pauseStreaming start streaming
+                SendResumeRestoreAndContinue(false);
             }
             UpdateControls();
         }   // pauseStreaming
@@ -653,12 +856,102 @@ namespace GrblPlotter
             return list;
         }
 
+        private void SendResumeRestoreAndContinue(bool forceCaseA)
+        {
+            timerSerial.Interval = Grbl.pollInterval;
+            if (parserStateGC.Contains("F0"))
+            {
+                parserStateGC = parserStateGC.Replace("F0", "F100");
+                AddToLog(string.Format("[Fix F0: {0}]", parserStateGC));
+            }
+
+            bool xyMoved = forceCaseA
+                || !Gcode.IsEqual(posPause.X, posWork.X) || !Gcode.IsEqual(posPause.Y, posWork.Y);
+            bool zMoved = !Gcode.IsEqual(posPause.Z, posWork.Z);
+            if (xyMoved)
+            {
+                AddToLog("[Restore Position]");
+                if (logStartStop) Logger.Trace("[Restore] X{0:0.000} Y{1:0.000}  State:{2}", posPause.X, posPause.Y, parserStateGC);
+            }
+            if (AutoWriter.ResumeRestore.IsPenDown(posPause.Z))
+                AddToLog(string.Format("[Restore Pen Z0->Z{0:0.###} re-press]", posPause.Z));
+            foreach (string line in AutoWriter.ResumeRestore.BuildLines(xyMoved, zMoved, posPause.X, posPause.Y, posPause.Z))
+                RequestSend(line);
+
+            AddToLog(string.Format("[Start streaming line:{0} - no echo]", streamingBuffer.GetSentLineNr()));
+            Logger.Info("▲▼▲▼▲ pauseStreaming start streaming ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼");
+            streamingStateNow = GrblStreaming.ok;
+
+            if (parserStateGC.Length > 0)
+            {
+                AddToLog("[Restore Settings: " + parserStateGC + " ]");
+                RequestSend(parserStateGC);
+            }
+
+            waitForIdle = false;
+            waitForOk = false;
+            isStreamingPause = false;
+            isStreamingRequestPause = false;
+            PreProcessStreaming();
+            UpdateControls();
+        }
+
+        private void FinishHoldFlushResume()
+        {
+            resumeFlushWaitingIdle = false;
+            var confirmed = new System.Collections.Generic.List<string>();
+            int confirmedCount = streamingBuffer.IndexConfirmed;
+            for (int i = 0; i < confirmedCount; i++)
+            {
+                string line = streamingBuffer.PeekLine(i);
+                if (line.Length == 0)
+                    break;
+                confirmed.Add(line);
+            }
+            int resumeIndex = AutoWriter.ResumeRestore.FindInProgressLine(
+                confirmed, confirmed.Count, posStreamOrigin.X, posStreamOrigin.Y, posPause.X, posPause.Y);
+            lock (sendDataLock)
+            {
+                streamingBuffer.IndexSent = resumeIndex;
+                streamingBuffer.IndexConfirmed = resumeIndex;
+            }
+            AddToLog(string.Format("[Resume flush idle: Case A then continue from index:{0}]", resumeIndex));
+            Logger.Info("FinishHoldFlushResume resume index {0} pause X{1:0.000} Y{2:0.000} origin X{3:0.000} Y{4:0.000}",
+                resumeIndex, posPause.X, posPause.Y, posStreamOrigin.X, posStreamOrigin.Y);
+            SendResumeRestoreAndContinue(true);
+        }
+
         /******************************************************************
          * stopStreaming()
          * Red stop retains controller HOLD; startup cleanup waits until IDLE
          ******************************************************************/
         public void StopStreaming(bool isNotStartup)
         {
+            if (isNotStartup && writingFlow.Enabled && writingFlow.CanReturnOrigin && !stopHoldLatched)
+            {
+                writingResumeRequested = false;
+                lock (sendDataLock)
+                {
+                    if (!WritingSafe()) { CancelWritingControl(); return; }
+                    if (writingFlow.State == AutoWriter.WritingFlowControl.Phase.Paused
+                        && (!Gcode.IsEqual(posMachine.X - posWork.X, writingPauseMachine.X - writingPauseWork.X)
+                        || !Gcode.IsEqual(posMachine.Y - posWork.Y, writingPauseMachine.Y - writingPauseWork.Y)
+                        || !Gcode.IsEqual(posMachine.Z - posWork.Z, writingPauseMachine.Z - writingPauseWork.Z)))
+                    { CancelWritingControl(); return; }
+                    isStreamingRequestPause = true; pauseDrainRemaining = 0;
+                    if (writingFlow.State == AutoWriter.WritingFlowControl.Phase.Running)
+                    {
+                        writingOffsetX = posMachine.X - posWork.X;
+                        writingOffsetY = posMachine.Y - posWork.Y; writingOffsetZ = posMachine.Z - posWork.Z;
+                    }
+                    writingFlow.Stop(true, QueueWritingControl);
+                    streamingStateNow = GrblStreaming.waitidle;
+                    AddToLog("[Writing stop: queued pen-up then G90 G1 X0 Y0 F1800 in unchanged G54; wait for ACK and fresh Idle]");
+                    ProcessSend();
+                }
+                UpdateControls();
+                return;
+            }
             bool wasCheckMode = isStreamingCheck;
             if (isStreamingCheck)
             {
@@ -730,6 +1023,7 @@ namespace GrblPlotter
         /***** reset streaming variables *****/
         private void ResetStreaming(bool isStopping = true)
         {
+            EndWritingControl();
             externalProbe = false;
             isStreaming = false;
             isStreamingRequestPause = false;
@@ -754,9 +1048,9 @@ namespace GrblPlotter
          * process ok message for streaming
          * called in RX event chain, from processGrblMessages()
          ********************************************************/
-        public void ProcessOkStreaming()
+        public void ProcessOkStreaming(bool writingProgramAck = true)
         {
-            if (isStreaming)    // || isStreamingRequestStopp)
+            if (isStreaming && (!writingFlow.Enabled || writingProgramAck))    // || isStreamingRequestStopp
             {
                 // confirm sent data
                 if (!isStreamingPause)
@@ -828,7 +1122,8 @@ namespace GrblPlotter
          **********************************************************************************/
         private void PreProcessStreaming()
         {
-            if (stopHoldLatched) return;
+            if (stopHoldLatched || writingFlow.BlocksProgram) return;
+            if (writingFlow.Enabled) { PreProcessWritingMotion(); return; }
             if (!lowLevelPerformance)
             {
                 int lengthFree = sendBuffer.MissingConfirmationLength();        // 2022-05-27 keep sendBuffer small, for short reaction time on pause request
@@ -862,6 +1157,7 @@ namespace GrblPlotter
             {
                 lock (sendDataLock)
                 {
+                    if (stopHoldLatched || writingFlow.BlocksProgram) break;
                     string line = streamingBuffer.GetSentLine();
                     if ((line == "OV") || (line == "UR"))
                     {
@@ -929,6 +1225,7 @@ namespace GrblPlotter
                     /* remove spaces from line (in echo, there are also no spaces) */
                     sendBuffer.Add(line.Replace(" ", ""), streamingBuffer.GetSentLineNr());
                     streamingBuffer.LineWasSent();
+                    if (writingFlow.Enabled) writingFlow.ProgramQueued(line);
                     if (pauseDrainRemaining > 0)
                         pauseDrainRemaining--;      // candidate C: one more drain-to-boundary line fed
                     streamingStateOld = streamingStateNow;
@@ -951,6 +1248,9 @@ namespace GrblPlotter
         ***************************************************************/
         private void StreamingIDLE()
         {
+            if (writingFlow.Enabled && (writingFlow.State != AutoWriter.WritingFlowControl.Phase.Running
+                || (streamingBuffer.IndexConfirmed >= streamingBuffer.Count
+                    && !writingFlow.CanFinish(sendBuffer.IndexConfirmed == sendBuffer.Count, writingStatusReceipts)))) return;
             // in main GUI: send extra Pause-Code in MainTimer_Tick from Properties.ListSettings.Default.flowControlText
             // OnRaiseStreamEvent - case grblStreaming.pause: if (isStreamingPauseFirst && Properties.ListSettings.Default.flowControlEnable) delayedSend = 2;
             if (countPreventIdle <= 1)
@@ -1006,7 +1306,8 @@ namespace GrblPlotter
                      * candidate-E HOLD path the lift queues behind the hold and runs on the '~'
                      * release, just before the restore lines; on a natural-IDLE settle it runs
                      * immediately. Explicit G90 in case the operator left G91 active. */
-                    if (AutoWriter.ResumeRestore.IsPenDown(posPause.Z))
+                    if (AutoWriter.ResumeRestore.IsPenDown(posPause.Z)
+                        && grblStateNow != GrblState.hold)
                     {
                         AddToLog("[Auto pen-up Z0]");
                         RequestSend("G90 G1 Z0 F10000");
@@ -1036,6 +1337,7 @@ namespace GrblPlotter
         /***** last command was sent/received - end streaming *****/
         private void StreamingFinish()
         {
+            EndWritingControl();
             countPreventEvent = 0; countPreventOutput = 0;
 
             AddToLog(string.Format("\r[Streaming finish line:{0}]", streamingBuffer.GetConfirmedLineNr()));

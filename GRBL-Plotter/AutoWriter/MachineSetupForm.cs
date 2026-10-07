@@ -37,6 +37,11 @@ namespace GrblPlotter.AutoWriter
         private TextBox lineSpacingInput;
         // Font size = glyph body height in mm; empty keeps the native 10 mm body (scale 1.0).
         private TextBox fontSizeInput;
+        // Font selector (stage 2 字库路线): built-in schematic glyphs or a discovered
+        // font pack. Packs load lazily on selection; discovery never blocks the dialog.
+        private ComboBox fontSelector;
+        private readonly List<string> fontPackPaths = new List<string>();
+        private GlyphFontPack selectedFontPack;
         // Optional sink that loads a generated writing program into the main G-code editor so the
         // existing preview / simulation / send pipeline can be used. Null in an unconnected shell.
         private readonly Action<string> loadIntoPreview;
@@ -112,7 +117,12 @@ namespace GrblPlotter.AutoWriter
             applyButtons.Controls.Add(startAtOrigin);
             // Multi-character row: text + letter/line spacing feed TextLayoutService; an empty text
             // keeps the historical single-工 sample so existing checks and habits still work.
-            applyButtons.Controls.Add(new Label { Text = "文本（可用：" + BuiltinGlyphLibrary.AvailableSymbols + "）", AutoSize = true });
+            applyButtons.Controls.Add(new Label { Text = "字体", AutoSize = true });
+            fontSelector = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
+            PopulateFontSelector();
+            fontSelector.SelectedIndexChanged += (sender, args) => { selectedFontPack = null; };
+            applyButtons.Controls.Add(fontSelector);
+            applyButtons.Controls.Add(new Label { Text = "文本（内置可用：" + BuiltinGlyphLibrary.AvailableSymbols + "）", AutoSize = true });
             writingInputText = new TextBox { Text = "", Width = 110 };
             applyButtons.Controls.Add(writingInputText);
             applyButtons.Controls.Add(new Label { Text = "字距mm", AutoSize = true });
@@ -304,9 +314,82 @@ namespace GrblPlotter.AutoWriter
             double sizeMm = LayoutValue(fontSizeInput, "字号");
             if (sizeMm <= 0)
                 throw new ArgumentException("字号必须大于 0（字身高度 mm，小数点使用 . ）：" + fontSizeInput.Text);
-            return TextLayoutService.Layout(text, BuiltinGlyphLibrary.Resolve,
+            Func<char, BuiltinGlyph> resolver = BuiltinGlyphLibrary.Resolve;
+            GlyphFontPack pack = SelectedPackOrNull();
+            if (pack != null)
+            {
+                RequireGlyphsAvailable(pack, text);
+                resolver = pack.ToResolver();
+            }
+            return TextLayoutService.Layout(text, resolver,
                 LayoutValue(letterSpacingInput, "字距"), LayoutValue(lineSpacingInput, "行距"),
                 BuiltinGlyphLibrary.LineHeightMm, sizeMm / BuiltinGlyphLibrary.BodySizeMm);
+        }
+
+        // Font selector population: builtin entry plus every discovered pack, by pack name.
+        // Any discovery/loading failure keeps the dialog usable with the builtin glyphs only.
+        private void PopulateFontSelector()
+        {
+            fontSelector.Items.Clear();
+            fontPackPaths.Clear();
+            selectedFontPack = null;
+            fontSelector.Items.Add("内置（工王一，示意图形）");
+            try
+            {
+                foreach (string path in GlyphFontPackCatalog.DiscoverPackPaths())
+                {
+                    try
+                    {
+                        GlyphFontPack probe = GlyphFontPack.LoadFromFile(path);
+                        fontPackPaths.Add(path);
+                        fontSelector.Items.Add(probe.Name + "（" + probe.GlyphCount + " 字）");
+                    }
+                    catch (Exception err)
+                    {
+                        // A defective pack must not hide the others; surface it as its own entry.
+                        fontPackPaths.Add(path);
+                        fontSelector.Items.Add("无法加载: " + Path.GetFileName(path) + "（" + err.Message + "）");
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // Discovery itself failed (missing/locked folder): builtin only.
+            }
+            fontSelector.SelectedIndex = 0;
+        }
+
+        private GlyphFontPack SelectedPackOrNull()
+        {
+            int index = fontSelector == null ? -1 : fontSelector.SelectedIndex;
+            if (index <= 0 || index > fontPackPaths.Count)
+                return null;
+            if (selectedFontPack != null)
+                return selectedFontPack;
+            selectedFontPack = GlyphFontPack.LoadFromFile(fontPackPaths[index - 1]);
+            return selectedFontPack;
+        }
+
+        // Precheck BEFORE layout so the operator sees every missing character at once
+        // instead of one throw per generation click.
+        private static void RequireGlyphsAvailable(GlyphFontPack pack, string text)
+        {
+            var missing = new SortedSet<char>();
+            foreach (char symbol in text)
+            {
+                if (symbol == '\r' || symbol == '\n')
+                    continue;
+                if (!pack.ChainHasGlyph(symbol))
+                    missing.Add(symbol);
+            }
+            if (missing.Count == 0)
+                return;
+            var shown = new List<char>(missing);
+            string preview = string.Join(" ", shown.ConvertAll(c => c.ToString()).GetRange(0, Math.Min(shown.Count, 30)).ToArray());
+            throw new ArgumentException(
+                "字库「" + pack.Name + "」缺 " + shown.Count + " 个字：" + preview +
+                (shown.Count > 30 ? " …" : "") +
+                "。用 scripts/generate-stage2-fontpack.py 扩包后再写，或改选内置字体。");
         }
 
         private static double LayoutValue(TextBox box, string name)

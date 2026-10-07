@@ -48,8 +48,12 @@ $flags = [Reflection.BindingFlags]::Static -bor [Reflection.BindingFlags]::Publi
 
 $buildLines = $type.GetMethod('BuildLines', $flags)
 $isPenDown = $type.GetMethod('IsPenDown', $flags)
+$shouldFlush = $type.GetMethod('ShouldFlushHoldLeftover', $flags)
+$findProgress = $type.GetMethod('FindInProgressLine', $flags)
 if (-not $buildLines) { throw 'ResumeRestore.BuildLines not found.' }
 if (-not $isPenDown)  { throw 'ResumeRestore.IsPenDown not found.' }
+if (-not $shouldFlush) { throw 'ResumeRestore.ShouldFlushHoldLeftover not found.' }
+if (-not $findProgress) { throw 'ResumeRestore.FindInProgressLine not found.' }
 
 $log = New-Object System.Collections.Generic.List[string]
 function Assert-True([bool] $condition, [string] $name) {
@@ -126,8 +130,28 @@ try {
     [Threading.Thread]::CurrentThread.CurrentCulture = $oldCulture
 }
 
+# ---- HOLD leftover: flush only when hold + pen down; never '~ then leftover XY'. ----
+Assert-True  ([bool]$shouldFlush.Invoke($null, @($true, $true)))   'flush: HOLD + pen down'
+Assert-False ([bool]$shouldFlush.Invoke($null, @($true, $false)))  'no flush: HOLD + pen up'
+Assert-False ([bool]$shouldFlush.Invoke($null, @($false, $true)))  'no flush: Idle + pen down'
+
+# R6 21:49: started at (41,5.5), paused mid G1 X1 Y0 at (35.975,4.812).
+$r6 = [string[]]@(
+    'G21','G90','G94','G54',
+    'G1 Z0 F10000','G1 Z5 F10000',
+    'G1 X1 Y0 F60','G1 X2 Y0 F60','G1 X3 Y0 F60'
+)
+$r6idx = [int]$findProgress.Invoke($null, @($r6, $r6.Length, 41.0, 5.5, 35.975, 4.812))
+Assert-Equal 6 $r6idx 'R6 in-progress line is G1 X1 Y0'
+
+# Pause exactly on a vertex: resume the next XY.
+$vert = [string[]]@('G1 X5 Y0 F60','G1 X10 Y0 F60')
+$vidx = [int]$findProgress.Invoke($null, @($vert, 2, 0.0, 0.0, 5.0, 0.0))
+Assert-Equal 1 $vidx 'vertex pause resumes next segment'
+
 $log.Add('')
 $log.Add('PASS: resume restore lifts the pen BEFORE any XY travel, travels with G1 + explicit')
 $log.Add('F1800 (never a G0 rapid), re-presses LAST with a real 0->Z transition, keeps the old')
-$log.Add('behaviour for the no-motion cases, and formats numbers invariantly.')
+$log.Add('behaviour for the no-motion cases, formats numbers invariantly, and on HOLD+pen-down')
+$log.Add('flushes leftover planner then resumes the in-progress XY segment (R6 Case A).')
 [IO.File]::WriteAllLines((Join-Path $repoRoot 'artifacts\stage0\resume-restore-test.txt'), $log)

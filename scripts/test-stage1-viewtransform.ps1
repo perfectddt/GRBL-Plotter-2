@@ -145,4 +145,57 @@ Assert-True ($described.Describe().IndexOf('rotate 90 deg CW') -ge 0) 'the descr
 Assert-True ($described.Describe().IndexOf('mirror X') -ge 0) 'the description names the mirror'
 Assert-True ($described.Describe().IndexOf('mirror Y') -lt 0) 'the description leaves out the mirror that is off'
 
+# Factory-compatible startup/reset mirrors the paper Y direction without changing coordinates.
+$factory = New-Object GrblPlotter.ViewTransform -ArgumentList $true
+Assert-True $factory.MirrorY 'factory view starts with vertical mirror'
+Assert-True $factory.IsDefault 'factory view starts at its default'
+Assert-False $factory.IsIdentity 'factory view differs from machine-coordinate view'
+$offset = Get-ViewOffset $factory 15 20 5 5
+Assert-Near $offset[0] 10 'factory view preserves X'
+Assert-Near $offset[1] -15 'factory view reverses Y'
+$factory.RotateClockwise()
+$offset = Get-ViewOffset $factory 15 5 5 5
+Assert-Near $offset[0] 0 'factory clockwise leaves right'
+Assert-Near $offset[1] -10 'factory clockwise moves right down even with mirror'
+$factory.Reset()
+$matrix = $factory.BuildMatrix(5, 5)
+try {
+    $points = [System.Drawing.PointF[]]@([System.Drawing.PointF]::new(15, 20))
+    $matrix.TransformPoints($points)
+    $matrix.Invert()
+    $matrix.TransformPoints($points)
+    Assert-Near $points[0].X 15 'inverse restores machine X'
+    Assert-Near $points[0].Y 20 'inverse restores machine Y'
+} finally { $matrix.Dispose() }
+$factory.ToggleMirrorY()
+Assert-True $factory.IsIdentity 'operator can show unmirrored machine coordinates'
+Assert-False $factory.IsDefault 'unmirrored view is not factory default'
+$factory.RotateClockwise()
+$factory.ToggleMirrorX()
+$factory.Reset()
+Assert-True $factory.IsDefault 'reset restores factory default'
+Assert-True $factory.MirrorY 'reset restores vertical mirror'
+Assert-False $factory.MirrorX 'reset clears horizontal mirror'
+Assert-True ($factory.QuarterTurns -eq 0) 'reset clears rotation'
+
 Write-Host ('PASS: stage1 view transform validated. Temporary artifacts: ' + $tempRoot)
+
+# Every visual keypad anchor must round-trip through the actual display matrix.
+$anchorChecks = 0
+foreach ($mx in @(0,1)) { foreach ($my in @(0,1)) { foreach ($turn in 0..3) {
+    $view = [GrblPlotter.ViewTransform]::new()
+    if ($mx) { $view.ToggleMirrorX() }
+    if ($my) { $view.ToggleMirrorY() }
+    for ($i=0; $i -lt $turn; $i++) { $view.RotateClockwise() }
+    foreach ($anchor in 1..9) {
+        $world = $view.MapViewAnchorToWorld($anchor)
+        $point = Get-ViewOffset $view (($world-1)%3-1) (1-[Math]::Floor(($world-1)/3)) 0 0
+        Assert-Near $point[0] (($anchor-1)%3-1) 'Visual anchor X'
+        Assert-Near $point[1] (1-[Math]::Floor(($anchor-1)/3)) 'Visual anchor Y'
+        $anchorChecks++
+    }
+}}}
+$flipped = [GrblPlotter.ViewTransform]::new($true)
+Assert-Near ($flipped.MapViewAnchorToWorld(1)) 7 'Mirrored visual top-left uses minimum Y'
+Assert-Near ($flipped.MapViewAnchorToWorld(7)) 1 'Mirrored visual bottom-left uses maximum Y'
+Write-Host "PASS: $anchorChecks visual origin mappings across all mirror/rotation states."

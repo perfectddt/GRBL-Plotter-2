@@ -26,6 +26,7 @@ using GrblPlotter.Helper;
 using GrblPlotter.UserControls;
 using System;
 using System.Drawing;
+using System.Linq;
 using System.Windows.Forms;
 
 namespace GrblPlotter
@@ -206,8 +207,18 @@ namespace GrblPlotter
             if (fCTBCode.Lines.Count > 1)
             {
                 TransformStart("Apply Offset");
+                bool writingOriginPark = AutoWriter.WritingFlowControl.IsWritingProgram(fCTBCode.Lines)
+                    && fCTBCode.Text.Contains("; End park: the pen is raised and the tool returns to work X0 Y0.");
                 zoomFactor = 1;
-                fCTBCode.Text = VisuGCode.TransformGCodeOffset(-e.OffsetX, -e.OffsetY, VisuGCode.GetTranslate(e.Nr));
+                int worldAnchor = viewTransform.MapViewAnchorToWorld(e.Nr);
+                fCTBCode.Text = VisuGCode.TransformGCodeOffset(-e.OffsetX, -e.OffsetY, VisuGCode.GetTranslate(worldAnchor));
+                if (writingOriginPark)
+                {
+                    var lines = fCTBCode.Lines.Select(AutoWriter.WritingFlowControl.NormalizeWritingLine).ToList();
+                    for (int i = lines.Count - 1; i >= 0; i--)
+                        if (!string.IsNullOrWhiteSpace(lines[i])) { lines[i] = "G1 X0 Y0 F1800"; break; }
+                    fCTBCode.Text = string.Join(Environment.NewLine, lines);
+                }
                 fCTBCodeClickedLineNow = fCTBCodeClickedLineLast;
                 fCTBCodeClickedLineLast = 0;
                 TransformEnd();
@@ -219,6 +230,15 @@ namespace GrblPlotter
         {
             if (string.IsNullOrEmpty(e.Command) && (e.Realtime != 0))   // send realtime command
             {
+                // An ordered writing pause stops host streaming, not controller feed.
+                // Resume through the same UI/state path as the top Play button; never
+                // let this button toggle a running job into pause or bypass a pending lift.
+                if (e.Realtime == (byte)'~' && _serial_form != null && _serial_form.IsWritingControlActive)
+                {
+                    if (isStreaming && isStreamingPause && !_serial_form.IsWritingControlPending)
+                        StartStreaming(0, fCTBCode.LinesCount - 1);
+                    return;
+                }
                 // AutoWriter candidate G: the flow-control panel "Reset" button only forwards the raw
                 // byte 0x18, so this is the last place that can still ask before it leaves the PC.
                 if ((e.Realtime == 0x18) && !ConfirmSoftReset(isStreaming)) return;

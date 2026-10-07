@@ -169,6 +169,11 @@ namespace GrblPlotter
             switch (e.Status)
             {
                 case GrblStreaming.ok:
+                    if (_serial_form.IsWritingControlActive && !_serial_form.IsWritingPaused)
+                    {
+                        isStreamingPause = false;
+                        ucStreaming.SetStatusStreamStart(false, false, false);
+                    }
                     if (!isStreamingCheck)
                     {
                         if (Grbl.lastErrorNr <= 0)
@@ -195,7 +200,7 @@ namespace GrblPlotter
 
                     SaveStreamingStatus(e.CodeLineSent, "Pause", "");
 
-                    if (Properties.Settings.Default.flowControlEnable) // send extra Pause-Code in MainTimer_Tick from Properties.ListSettings.Default.flowControlText
+                    if (Properties.Settings.Default.flowControlEnable && !_serial_form.SuppressWritingFlowCode) // send extra Pause-Code in MainTimer_Tick from Properties.ListSettings.Default.flowControlText
                         delayedSend = 2;
 
                     if (logStreaming)
@@ -209,6 +214,7 @@ namespace GrblPlotter
                     /***** Show tool exchange message box *****/
                     for (int tmpLine = (fCTBCodeClickedLineNow - 4); tmpLine <= (fCTBCodeClickedLineNow + 2); tmpLine++)
                     {   // find correct line - GRBL-Plotter generated = "M0 (Tool:46  GroupColor:Black (46) = 000000)"
+                        if (_serial_form.IsWritingControlActive) break;
                         // other tool generated: "( Tool #6 "Bohrer 0.8mm" / Diameter 0.8 mm )"
 
                         if (LineIsInRange(tmpLine))
@@ -366,10 +372,11 @@ namespace GrblPlotter
                     break;
 
                 case GrblStreaming.stop:
+                    if (_serial_form.SuppressWritingFlowCode) ResetStreaming();
                     SaveStreamingStatus(e.CodeLineSent, "Stop", "");
                     timerUpdateControls = true; timerUpdateControlSource = "grblStreaming.stop";// updateControls();
                     SetInfoLabel(Localization.GetString("mainInfoStopStream") + e.CodeLineSent.ToString() + ")", Color.Fuchsia);
-                    if (Properties.Settings.Default.flowControlEnable && !_serial_form.IsStopHoldLatched)
+                    if (Properties.Settings.Default.flowControlEnable && !_serial_form.IsStopHoldLatched && !_serial_form.SuppressWritingFlowCode)
                         delayedSend = 2;
 
                     _process_form?.Feedback("G-Code Stream", "", false);
@@ -500,6 +507,8 @@ namespace GrblPlotter
 			{	Logger.Error(" StartStreaming: 1st serial form is not available !!!"); return;}
 		
             // Refuse before UI state, restore lines or progress are changed.
+            if (_serial_form.IsWritingControlPending)
+            { SetInfoLabel("Writing control pending: wait for pen-up and fresh Idle", Color.Fuchsia); return; }
             if (_serial_form.IsStopHoldLatched || (!isStreaming && Grbl.Status == GrblState.hold))
             {
                 _serial_form.AddToLog(AutoWriter.StopHoldGuard.RefusalMessage);
@@ -632,6 +641,12 @@ namespace GrblPlotter
                     }
 
                     _serial_form.StartStreaming(fCTBCode.Lines, startLine, endLine, false);  // no check
+                    if (!_serial_form.IsStreaming)
+                    {
+                        ResetStreaming();
+                        SetInfoLabel("启动未成功，请查看串口日志中的拒绝原因", Color.Fuchsia);
+                        return;
+                    }
 
                     if (removeFiducials)    // restore original code with fiducials
                     {
@@ -661,6 +676,18 @@ namespace GrblPlotter
                     else
                     {
                         Logger.Info("⏸⏸  Pause streaming - continue stream");
+                        if (_serial_form.IsWritingControlActive)
+                        {
+                            _serial_form.PauseStreaming();
+                            if (_serial_form.IsWritingPaused)
+                            {
+                                SetInfoLabel("等待新状态与发送额度，笔保持抬起", Color.Yellow);
+                                return;
+                            }
+                            ucStreaming.SetStatusStreamStart(false, false, false);
+                            isStreamingPause = false;
+                            return;
+                        }
                         EventCollector.SetStreaming("Spac");
                         ucStreaming.SetStatusStreamStart(false, false, false);
                         isStreamingPause = false;
@@ -682,6 +709,11 @@ namespace GrblPlotter
             showPicBoxBgImage = false;                 // don't show background image anymore
 
             _serial_form.StopStreaming(showMessage);
+            if (_serial_form.IsWritingControlPending && !_serial_form.IsStopHoldLatched)
+            {
+                SetInfoLabel("Writing stop pending: waiting for pen-up and return to work origin", Color.Fuchsia);
+                return;
+            }
 
             if (isStreaming || isStreamingCheck)
             {
