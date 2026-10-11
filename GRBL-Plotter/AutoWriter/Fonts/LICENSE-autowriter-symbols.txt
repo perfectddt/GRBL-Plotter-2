@@ -1,0 +1,5 @@
+Original AutoWriter punctuation and digit monoline glyph definitions
+Copyright waived under CC0 1.0 Universal.
+https://creativecommons.org/publicdomain/zero/1.0/
+This applies only to supplemental symbols authored in generate-full-writing-font.py.
+Chinese medians retain the separate Arphic Public License and attribution.

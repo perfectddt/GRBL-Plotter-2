@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
@@ -486,6 +486,11 @@
     <Compile Include="AutoWriter\MainFormWriting.cs" />
     <Compile Include="AutoWriter\InspectionPolicy.cs" />
     <Compile Include="AutoWriter\MachineSetupForm.cs" />
+    <Compile Include="AutoWriter\RegionCanvas.cs" />
+    <Compile Include="AutoWriter\Services\RegionLayoutService.cs" />
+    <Compile Include="AutoWriter\Services\RegionTemplateService.cs" />
+    <Compile Include="AutoWriter\RegionTemplateForm.cs" />
+    <Compile Include="AutoWriter\Services\WritingEditorText.cs" />
     <Compile Include="AutoWriter\ResetGuard.cs" />
     <Compile Include="AutoWriter\SoftwareDatum.cs" />
     <Compile Include="AutoWriter\ResumeRestore.cs" />
@@ -502,12 +507,20 @@
     <Compile Include="AutoWriter\Services\MotionCalibrationService.cs" />
     <Compile Include="AutoWriter\Services\BuiltinGlyphLibrary.cs" />
     <Compile Include="AutoWriter\Services\TextLayoutService.cs" />
+    <Compile Include="AutoWriter\Services\WritingProjectService.cs" />
+    <Compile Include="AutoWriter\Services\MachineSetupStateService.cs" />
+    <Compile Include="AutoWriter\Services\PageTaskService.cs" />
+    <Compile Include="AutoWriter\Services\WritingExperience.cs" />
+    <Compile Include="AutoWriter\AutoWriterBuild.cs" />
     <Compile Include="AutoWriter\Services\GlyphFontPackService.cs" />
     <Compile Include="AutoWriter\Services\WritingProgramService.cs" />
     <Content Include="AutoWriter\Fonts\*.fontpack.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="AutoWriter\Fonts\LICENSE-arphic.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="AutoWriter\Fonts\LICENSE-autowriter-symbols.txt">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Compile Include="Program.cs" />

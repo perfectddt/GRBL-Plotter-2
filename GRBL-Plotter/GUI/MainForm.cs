@@ -69,6 +69,7 @@
  * 2026-07-28 l:772 f:BtnCustomButtonProcess update btnCustomCommand[index] after change
 */
 
+using GrblPlotter.AutoWriter.Services;
 using GrblPlotter.GUI;
 using GrblPlotter.Helper;
 using GrblPlotter.UserControls;
@@ -113,6 +114,11 @@ namespace GrblPlotter
 
         private bool showFormInFront = false;
         private bool shutDown = false;
+        private AutoWriter.MachineSetupForm machineSetupForm;
+        private readonly PageTaskService writingPageTask = new PageTaskService();
+        private Panel writingPageBar;
+        private Label writingPageStatus;
+        private Button writingPageConfirm;
 
         // Trace, Debug, Info, Warn, Error, Fatal
         private static readonly NLog.Logger Logger = NLog.LogManager.GetCurrentClassLogger();
@@ -147,9 +153,17 @@ namespace GrblPlotter
             var autoWriterMenu = new ToolStripMenuItem("AutoWriter");
             autoWriterMenu.DropDownItems.Add("机器配置与校准", null, (sender, args) =>
             {
-                using (var form = new AutoWriter.MachineSetupForm(LoadWritingIntoPreview)) form.ShowDialog(this);
+                ShowMachineSetup();
             });
             menuStrip1.Items.Add(autoWriterMenu);
+            writingPageBar = new Panel { Dock = DockStyle.Bottom, Height = 36 };
+            writingPageStatus = new Label { Dock = DockStyle.Fill, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(8, 0, 0, 0), Text = writingPageTask.StatusText };
+            writingPageConfirm = new Button { Text = "已换纸并确认位置", Dock = DockStyle.Right, Width = 170, Enabled = false };
+            writingPageConfirm.Click += (sender, args) => ConfirmWritingPaperChange();
+            writingPageBar.Controls.Add(writingPageStatus);
+            writingPageBar.Controls.Add(writingPageConfirm);
+            Controls.Add(writingPageBar);
+            writingPageTask.Changed += RefreshWritingPageBar;
             autoWriterMenu.DropDownItems.Add("读取固件与参数（检查模式）", null, (sender, args) =>
             {
                 try { _serial_form.BeginMachineInspection(); }
@@ -362,6 +376,34 @@ namespace GrblPlotter
         }
 
         // close Main form
+        private void ShowMachineSetup()
+        {
+            if (shutDown || IsDisposed || Disposing) return;
+            if (machineSetupForm == null || machineSetupForm.IsDisposed)
+            {
+                var form = new AutoWriter.MachineSetupForm(code =>
+                {
+                    if (!shutDown && !IsDisposed && !Disposing) LoadWritingIntoPreview(code);
+                }, MachineSetupStateService.DefaultPath, writingPageTask, code =>
+                {
+                    if (!shutDown && !IsDisposed && !Disposing) LoadBoundWritingPage(code);
+                }, MarkWritingPreviewStale, () => BtnOpenFile_Click(this, EventArgs.Empty));
+                machineSetupForm = form;
+                form.FormClosed += (sender, args) =>
+                {
+                    if (ReferenceEquals(machineSetupForm, form)) machineSetupForm = null;
+                };
+                form.Show(this);
+            }
+            else
+            {
+                if (machineSetupForm.WindowState == FormWindowState.Minimized)
+                    machineSetupForm.WindowState = FormWindowState.Normal;
+                machineSetupForm.Show();
+                machineSetupForm.Activate();
+            }
+        }
+
         private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
         {   // Note all other forms will be closed, before reaching following code...
             shutDown = true;
@@ -432,6 +474,11 @@ namespace GrblPlotter
 
         private void SendCommand(string txt, bool jogging = false)
         {
+            if (AutoWriter.Services.WritingCommandGuard.Blocks(writingPageTask != null && writingPageTask.BlocksManualCommand, txt, jogging))
+            {
+                SetInfoLabel("写字任务进行中，这条运动或点动命令已阻止。不会另开发送通道。", Color.Fuchsia);
+                return;
+            }
             if (!Grbl.isConnected)
             { Logger.Warn("SendCommand txt:{0}  jog:{1}  - not connected", txt, jogging); }
 
@@ -786,6 +833,15 @@ namespace GrblPlotter
         private void BtnCustomButtonProcess(int index, bool right, string btnText)
         {
             Logger.Trace("BtnCustomButtonProcess i:{0}  max:{1}  right:{2}  txt:{3}  command:{4}", index, btnCustomCommand.Length, right, btnText, btnCustomCommand[index]);
+            if (!right && writingPageTask != null && writingPageTask.BlocksManualCommand)
+            {
+                string taskCommand = index >= 0 && index < btnCustomCommand.Length ? btnCustomCommand[index] : "";
+                if (taskCommand == null || taskCommand.IndexOf("#stop", StringComparison.OrdinalIgnoreCase) < 0)
+                {
+                    SetInfoLabel("写字任务进行中，自定义命令已阻止。停止仍可使用。不会另开发送通道。", Color.Fuchsia);
+                    return;
+                }
+            }
             if ((index >= 0) && (index < btnCustomCommand.Length))		// < 32
             {
                 if (right)

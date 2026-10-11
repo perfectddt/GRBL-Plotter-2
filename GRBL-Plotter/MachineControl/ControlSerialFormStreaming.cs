@@ -49,6 +49,7 @@
 // OnRaiseStreamEvent(new StreamEventArgs((int)lineNr, codeFinish, buffFinish, status));
 // OnRaisePosEvent(new PosEventArgs(posWork, posMachine, grblStateNow, machineState, mParserState, rxString));// lastCmd));
 
+using GrblPlotter.AutoWriter.Services;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -134,6 +135,7 @@ namespace GrblPlotter
                 if (writingFlow.State == AutoWriter.WritingFlowControl.Phase.Stopped)
                 {
                     orderedWritingStopCompleted = true;
+                    WritingPageStopUnknown = false;
                     EndWritingControl();
                     StopStreamingFinal();
                 }
@@ -204,6 +206,21 @@ namespace GrblPlotter
         // A software stop cannot clear GRBL's planner. Keep HOLD until a controller welcome confirms reset.
         private volatile bool stopHoldLatched = false;
         public bool IsStopHoldLatched { get { return stopHoldLatched; } }
+        internal PageCompletionWitness WritingPageWitness { get; private set; }
+        internal bool WritingPageStopUnknown { get; private set; }
+        internal void ClearWritingPageWitness() { WritingPageWitness = null; }
+        internal void ReadWritingPageLines(out int sent, out int acknowledged, out int total)
+        {
+            sent = streamingBuffer.IndexSent;
+            acknowledged = streamingBuffer.IndexConfirmed;
+            total = streamingBuffer.Count;
+        }
+        internal void ReadWritingPageDispatch(out bool allSent, out bool allAcknowledged)
+        {
+            allSent = streamingBuffer.Count > 0 && streamingBuffer.IndexSent >= streamingBuffer.Count;
+            allAcknowledged = allSent && streamingBuffer.IndexConfirmed >= streamingBuffer.Count
+                && sendBuffer.Count > 0 && sendBuffer.IndexConfirmed >= sendBuffer.Count;
+        }
         /* HOLD + pen down: 0x18 flushes leftover XY so Case A can lift first. Welcome
          * must not ResetStreaming; Idle then sends the 4-line restore. */
         private bool resumeFlushKeepStream = false;
@@ -345,6 +362,8 @@ namespace GrblPlotter
             streamingStateNow = GrblStreaming.ok;
 
             streamingBuffer.Clear();    // on start streaming
+            WritingPageWitness = null;
+            WritingPageStopUnknown = false;
             bool writingStartHostEmpty = sendBuffer.IndexConfirmed == sendBuffer.Count;
             ResetStreaming();           // startStreaming
             writingFlow.Begin(gCodeList, !check && !isMarlin && startAtLine == 0 && !useSerial2 && !useSerial3
@@ -978,6 +997,7 @@ namespace GrblPlotter
                     AddToLog("[Stop: feed hold ! - halt immediately]");
                     AddToLog(AutoWriter.StopHoldGuard.RefusalMessage);
                 }
+                WritingPageStopUnknown = true;
                 StopStreamingFinal();
             }
             else
@@ -1316,6 +1336,7 @@ namespace GrblPlotter
                     if (isStreamingRequestStopp)    // 20200717
                     {
                         if (logStartStop) Logger.Trace(" grblStateChanged() - now really stop - resetStreaming");
+                        WritingPageStopUnknown = stopHoldLatched;
                         StopStreamingFinal();
                         isStreaming = false;
                     }
@@ -1337,6 +1358,16 @@ namespace GrblPlotter
         /***** last command was sent/received - end streaming *****/
         private void StreamingFinish()
         {
+            if (writingFlow.Enabled)
+            {
+                bool hostEmpty = sendBuffer.IndexConfirmed == sendBuffer.Count;
+                bool allAcknowledged = streamingBuffer.Count > 0 && streamingBuffer.IndexConfirmed >= streamingBuffer.Count && hostEmpty;
+                bool allSent = streamingBuffer.Count > 0 && streamingBuffer.IndexSent >= streamingBuffer.Count;
+                bool idleBarrier = grblStateNow == GrblState.idle && writingFlow.CanFinish(hostEmpty, writingStatusReceipts);
+                WritingPageWitness = PageCompletionWitness.FromController(allSent, allAcknowledged, !writingFlow.PenDown, IsConnectedToGrbl(), idleBarrier);
+            }
+            else
+                WritingPageWitness = null;
             EndWritingControl();
             countPreventEvent = 0; countPreventOutput = 0;
 

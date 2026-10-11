@@ -46,6 +46,8 @@ namespace GrblPlotter.AutoWriter.Services
         /// members (probed with Dictionary&lt;string,double&gt; too), while string values
         /// and List&lt;T&gt;/nested collections read reliably.</summary>
         [DataMember(Name = "c")] public string Character;
+        // Optional in schema 1; omitted entries retain the pack-wide CJK advance.
+        [DataMember(Name = "advanceMm", EmitDefaultValue = false)] public double? AdvanceMm;
         /// <summary>Flat [x1,y1,x2,y2,...] polylines in mm on the pack's em box.</summary>
         [DataMember(Name = "strokes")] public List<List<double>> Strokes;
     }
@@ -105,8 +107,7 @@ namespace GrblPlotter.AutoWriter.Services
                 throw new InvalidOperationException(
                     "字库包 em 尺寸 " + file.EmSizeMm + "mm 与内置字形库 " + BuiltinGlyphLibrary.EmSizeMm +
                     "mm 不一致：混排基线会错位，拒绝加载（" + path + "）。");
-            if (double.IsNaN(file.AdvanceCjkMm) || file.AdvanceCjkMm <= 0 ||
-                double.IsNaN(file.AdvanceSpaceMm) || file.AdvanceSpaceMm <= 0)
+            if (!ValidAdvance(file.AdvanceCjkMm) || !ValidAdvance(file.AdvanceSpaceMm))
                 throw new InvalidOperationException("字库包步进宽非法（" + path + "）。");
 
             var tolerance = 1.0;    // the generator enforces 0.5; the loader only guards corruption
@@ -117,6 +118,9 @@ namespace GrblPlotter.AutoWriter.Services
                     throw new InvalidOperationException(
                         "字库包字形条目的 c 字段不是单字符：" + (entry == null ? "null" : entry.Character) + "（" + path + "）。");
                 char symbol = entry.Character[0];
+                double advance = entry.AdvanceMm ?? file.AdvanceCjkMm;
+                if (!ValidAdvance(advance))
+                    throw new InvalidOperationException("字库包字形步进宽非法：「" + symbol + "」（" + path + "）。");
                 if (glyphs.ContainsKey(symbol))
                     throw new InvalidOperationException("字库包有重复字形「" + symbol + "」（" + path + "）。");
                 if (symbol == ' ')
@@ -141,15 +145,20 @@ namespace GrblPlotter.AutoWriter.Services
                                 x.ToString("R", CultureInfo.InvariantCulture) + ", " +
                                 y.ToString("R", CultureInfo.InvariantCulture) + ")。");
                         points.Add(new WritingPoint(x, y));
+                        if (entry.AdvanceMm.HasValue && (x < 0 || x > advance))
+                            throw new InvalidOperationException("字形笔画超出自己的步进宽：「" + symbol + "」。");
                     }
                     strokes.Add(new WritingStroke(points));
                 }
-                glyphs[symbol] = new BuiltinGlyph { Symbol = symbol, AdvanceMm = file.AdvanceCjkMm, Strokes = strokes };
+                glyphs[symbol] = new BuiltinGlyph { Symbol = symbol, AdvanceMm = advance, Strokes = strokes };
             }
 
             return new GlyphFontPack(glyphs, file.Name, file.Source, file.License,
                                      file.AdvanceCjkMm, file.AdvanceSpaceMm);
         }
+
+        private static bool ValidAdvance(double value)
+        { return !double.IsNaN(value) && !double.IsInfinity(value) && value > 0 && value <= BuiltinGlyphLibrary.EmSizeMm * 4; }
 
         public bool Contains(char symbol)
         { return glyphs.ContainsKey(symbol); }
@@ -191,6 +200,18 @@ namespace GrblPlotter.AutoWriter.Services
         /// <summary>Resolver delegate for TextLayoutService.Layout.</summary>
         public Func<char, BuiltinGlyph> ToResolver()
         { return ResolveWithFallback; }
+
+        /// <summary>
+        /// Returns a new pack where the overlay wins per character. The original files are not rewritten,
+        /// so an existing project fingerprint stays valid until the operator saves a project that references the overlay.
+        /// </summary>
+        public GlyphFontPack OverlayWith(GlyphFontPack overlay)
+        {
+            if (overlay == null || overlay.glyphs.Count == 0) return this;
+            var copy = new Dictionary<char, BuiltinGlyph>(glyphs);
+            foreach (KeyValuePair<char, BuiltinGlyph> pair in overlay.glyphs) copy[pair.Key] = pair.Value;
+            return new GlyphFontPack(copy, Name + " + " + overlay.Name, Source, License, AdvanceCjkMm, AdvanceSpaceMm);
+        }
     }
 
     /// <summary>Discovers glyph font packs for the writing UI font selector.

@@ -46,6 +46,7 @@
  * 2026-06-11 l:498 f:StartStreaming if (_serial_form == null)
 */
 
+using GrblPlotter.AutoWriter.Services;
 using GrblPlotter.GUI;
 using GrblPlotter.Helper;
 using System;
@@ -169,6 +170,7 @@ namespace GrblPlotter
             switch (e.Status)
             {
                 case GrblStreaming.ok:
+                    NoteWritingDispatchProgress();
                     if (_serial_form.IsWritingControlActive && !_serial_form.IsWritingPaused)
                     {
                         isStreamingPause = false;
@@ -183,9 +185,11 @@ namespace GrblPlotter
                         }
                     }
                     lastErrorLine = 0;
+                    NoteWritingDispatchProgress();
                     break;
 
                 case GrblStreaming.waitidle:
+                    NoteWritingDispatchProgress();
                     ucStreaming.SetStatusStreamStart(true, true, false);
                     SetInfoLabel(Localization.GetString("mainInfoWaitIdle") + e.CodeLineSent.ToString() + ")", Color.Yellow);
                     break;
@@ -194,6 +198,8 @@ namespace GrblPlotter
                     SetInfoLabel(Localization.GetString("mainInfoPause") + e.CodeLineSent.ToString() + ")", Color.Yellow);
                     ucStreaming.SetStatusStreamStart(true, false, true);
                     isStreamingPause = true;
+                    writingPageTask.NotePaused();
+                    RefreshWritingPageBar();
                     MainTimer.Stop();
                     MainTimer.Start();
                     timerUpdateControls = true; timerUpdateControlSource = "grblStreaming.pause";//updateControls(true);
@@ -284,10 +290,17 @@ namespace GrblPlotter
                     EventCollector.SetStreaming("Serr" + Grbl.lastErrorNr.ToString());
                     StatusStripSet(0, Grbl.lastMessage, Color.Fuchsia);
 
-                    if (tmpMessage.StartsWith("Lost connection"))
+                    if (tmpMessage != null && tmpMessage.StartsWith("Lost connection"))
                     {
                         isStreaming = false;
                         UpdateControlEnables();
+                        writingPageTask.NoteDisconnect();
+                        RefreshWritingPageBar();
+                    }
+                    else
+                    {
+                        writingPageTask.NoteCommandError();
+                        RefreshWritingPageBar();
                     }
 
                     if (lastErrorLine != e.CodeLineConfirmed)
@@ -335,6 +348,7 @@ namespace GrblPlotter
                     break;
 
                 case GrblStreaming.finish:
+                    NoteWritingPageFinish();
                     Logger.Info("streaming finished ok {0}", isStreamingOk);
                     EventCollector.SetStreaming("Sfin");
                     if (isStreamingOk)
@@ -372,6 +386,8 @@ namespace GrblPlotter
                     break;
 
                 case GrblStreaming.stop:
+                    writingPageTask.NoteStop(_serial_form != null && _serial_form.WritingPageStopUnknown);
+                    RefreshWritingPageBar();
                     if (_serial_form.SuppressWritingFlowCode) ResetStreaming();
                     SaveStreamingStatus(e.CodeLineSent, "Stop", "");
                     timerUpdateControls = true; timerUpdateControlSource = "grblStreaming.stop";// updateControls();
@@ -515,6 +531,20 @@ namespace GrblPlotter
                 SetInfoLabel(AutoWriter.StopHoldGuard.RefusalMessage, Color.Fuchsia);
                 return;
             }
+            if (!isStreaming)
+            {
+                string pageRefusal = writingPageTask.StartRefusal(fCTBCode.Text);
+                if (pageRefusal != null)
+                {
+                    SetInfoLabel(pageRefusal, Color.Fuchsia);
+                    return;
+                }
+                if (AutoWriter.Services.WritingPreviewBinding.BlocksStart(boundWritingStale, fCTBCode.Text, boundWritingProgram))
+                {
+                    SetInfoLabel("主界面里这份写字代码已过期。请重新生成并载入。其他程序不受影响。", Color.Fuchsia);
+                    return;
+                }
+            }
 
             Logger.Trace("startStreaming serialPortOpen:{0} ", _serial_form.SerialPortOpen);
             lblInfoOkString = Localization.GetString("mainInfoSendCode");
@@ -647,6 +677,8 @@ namespace GrblPlotter
                         SetInfoLabel("启动未成功，请查看串口日志中的拒绝原因", Color.Fuchsia);
                         return;
                     }
+                    writingPageTask.NoteStarted();
+                    RefreshWritingPageBar();
 
                     if (removeFiducials)    // restore original code with fiducials
                     {
@@ -686,11 +718,15 @@ namespace GrblPlotter
                             }
                             ucStreaming.SetStatusStreamStart(false, false, false);
                             isStreamingPause = false;
+                            writingPageTask.NoteResumed();
+                            RefreshWritingPageBar();
                             return;
                         }
                         EventCollector.SetStreaming("Spac");
                         ucStreaming.SetStatusStreamStart(false, false, false);
                         isStreamingPause = false;
+                        writingPageTask.NoteResumed();
+                        RefreshWritingPageBar();
                         StatusStripSet(1, Localization.GetString("statusStripeStreamingContinue"), Color.Lime);         // Continue streaming
                         StatusStripColor(0, Color.White);
                         delayedStatusStripClear1 = 8;

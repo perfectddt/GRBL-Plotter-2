@@ -311,6 +311,8 @@ namespace GrblPlotter
                         break;
 
                     case GrblState.alarm:
+                        writingPageTask.NoteAlarm();
+                        RefreshWritingPageBar();
                    //     signalLock = 1;
                    //     btnKillAlarm.BackColor = GroupColor.Yellow;
                         ucFlowControl.HighlightKillAlarm(true);
