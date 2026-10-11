@@ -22,4 +22,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/publish-autowriter.p
 - 模板仍在 `RegionTemplates`，不包含正文和字体。
 - 机器配置和写字项目分开保存。换电脑时复制项目、字库、补充字库和机器配置；路径变了要在项目里重新选择字体。
 
-提交和推送仍需单独授权。本文不代替实机纸面验收。
+当前代码已提交。推送仍需单独授权。本文不代替实机纸面验收。完成情况见 [功能状态](AutoWriter-功能状态.md)。
