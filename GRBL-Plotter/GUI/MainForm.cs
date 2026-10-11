@@ -388,6 +388,9 @@ namespace GrblPlotter
                 {
                     if (!shutDown && !IsDisposed && !Disposing) LoadBoundWritingPage(code);
                 }, MarkWritingPreviewStale, () => BtnOpenFile_Click(this, EventArgs.Empty));
+                form.SheetOverlay = (sheet, boxes) => { if (!shutDown && !IsDisposed) SetWritingSheetOverlay(sheet, boxes); };
+                form.PenStartRequested = (x, y) => SetPenStart(x, y);
+                form.PenStartQuery = () => { XyPoint p = CurrentPenStart(); return new[] { p.X, p.Y }; };
                 machineSetupForm = form;
                 form.FormClosed += (sender, args) =>
                 {

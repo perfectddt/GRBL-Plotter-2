@@ -1,4 +1,4 @@
-﻿/*  GRBL-Plotter. Another GCode sender for GRBL.
+/*  GRBL-Plotter. Another GCode sender for GRBL.
     This file is part of the GRBL-Plotter application.
    
     Copyright (C) 2015-2025 Sven Hasemann contact: svenhb@web.de
@@ -269,6 +269,7 @@ namespace GrblPlotter
 
         public void LoadExtern(string file, bool process = true)		// called from MainFormLoadFile 466
         {
+            penImportContext = GrblPlotter.AutoWriter.Services.PenControlSync.Current;
             if (!File.Exists(file)) return;
             lastFile = file;
             try
@@ -297,6 +298,7 @@ namespace GrblPlotter
         { LoadClipboard(); }
         public void LoadClipboard()									// called from MainFormLoadFile 1383
         {
+            penImportContext = GrblPlotter.AutoWriter.Services.PenControlSync.Current;
             try
             {
                 IDataObject iData = Clipboard.GetDataObject();
@@ -314,6 +316,7 @@ namespace GrblPlotter
 
         public void LoadUrl(string url)								// called from MainFormLoadFile 654
         {
+            penImportContext = GrblPlotter.AutoWriter.Services.PenControlSync.Current;
             try
             {
                 pictureBox1.Load(url);
@@ -1306,7 +1309,12 @@ namespace GrblPlotter
         /*****************************************************************
         ********************* Generate GCode *****************************
         ******************************************************************/
+        private GrblPlotter.AutoWriter.Services.PenControlSync.ImportContext penImportContext;
         public void BtnGenerateClick(object sender, EventArgs e)
+        {
+            using (GrblPlotter.AutoWriter.Services.PenControlSync.Enter(penImportContext)) GenerateWithPenContext(sender, e);
+        }
+        private void GenerateWithPenContext(object sender, EventArgs e)
         {
             Logger.Trace("▼▼▼▼▼▼▼▼▼▼▼▼ BtnGenerateClick ");
             //    OnRaiseGuiControlEvent(new UserControlGuiControlEventArgs(GuiControl.guiUpdate, 13));

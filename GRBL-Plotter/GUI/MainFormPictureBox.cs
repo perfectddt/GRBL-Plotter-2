@@ -102,6 +102,62 @@ namespace GrblPlotter
         private XyPoint moveTranslation = new XyPoint(0, 0);
         private XyPoint moveTranslationOld = new XyPoint(0, 0);
         private bool posIsMoving = false;
+        private bool draggingToolMarker = false;
+        private bool toolMarkerCursor = false;
+        private bool penOnPaperSet = false;
+        private XyPoint penOnPaper = new XyPoint(0, 0);
+        private XyPoint toolDragOrigin = new XyPoint(0, 0);
+        private XyPoint toolDragTarget = new XyPoint(0, 0);
+        private Bitmap toolDragCache;
+        private bool toolDragCaching;
+        private RectangleF? writingSheetRect;
+        private RectangleF[] writingBoxRects = new RectangleF[0];
+        private readonly SolidBrush writingSheetBrush = new SolidBrush(Color.White);
+        private readonly SolidBrush writingBoxBrush = new SolidBrush(Color.FromArgb(255, 246, 214));
+
+        /// <summary>Page and writing boxes in work coordinates, drawn as backgrounds behind the strokes.</summary>
+        internal void SetWritingSheetOverlay(RectangleF? sheet, RectangleF[] boxes)
+        {
+            writingSheetRect = sheet;
+            writingBoxRects = boxes ?? new RectangleF[0];
+            pictureBox1.Invalidate();
+        }
+
+        internal XyPoint CurrentPenStart()
+        {
+            return BlackBoxPosition();
+        }
+
+        /// <summary>Set the black start point from typed numbers. The pen does not move.</summary>
+        internal string SetPenStart(double x, double y)
+        {
+            if (double.IsNaN(x) || double.IsInfinity(x) || double.IsNaN(y) || double.IsInfinity(y))
+                return "预览起点必须是有限数值。";
+            if (isStreaming || (writingPageTask != null && writingPageTask.BlocksManualCommand))
+                return "写字进行中，不能改黑色起点。";
+            penOnPaper = new XyPoint(x, y);
+            penOnPaperSet = true;
+            RefreshPenStartPreview();
+            return null;
+        }
+
+        private void BeginToolDragCache()
+        {
+            toolDragCache?.Dispose();
+            toolDragCache = null;
+            if (pictureBox1.Width < 1 || pictureBox1.Height < 1) return;
+            var bitmap = new Bitmap(pictureBox1.Width, pictureBox1.Height);
+            toolDragCaching = true;
+            try { pictureBox1.DrawToBitmap(bitmap, new Rectangle(0, 0, bitmap.Width, bitmap.Height)); toolDragCache = bitmap; }
+            catch { bitmap.Dispose(); }
+            finally { toolDragCaching = false; }
+        }
+
+        private void EndToolDragCache()
+        {
+            toolDragCache?.Dispose();
+            toolDragCache = null;
+        }
         private bool mouseWasMoved = false;
         private Point mouseDownPos = new Point();
         private Point mouseUpPos = new Point();
@@ -246,12 +302,44 @@ namespace GrblPlotter
                         lock (lockObject)
                         {
                             shiftedDisplay = false;
-                            if (!showPicBoxBgImage)
+                            if (draggingToolMarker)
+                            {
+                                toolDragTarget = picAbsPos;
+                                if (Panel.ModifierKeys == Keys.Alt)
+                                {
+                                    toolDragTarget.X = Math.Round(toolDragTarget.X, 1);
+                                    toolDragTarget.Y = Math.Round(toolDragTarget.Y, 1);
+                                }
+                            }
+                            bool useDragCache = draggingToolMarker && toolDragCache != null && !toolDragCaching;
+                            if (useDragCache)
+                            {
+                                Matrix world = e.Graphics.Transform;
+                                e.Graphics.Transform = pBoxOrig;
+                                e.Graphics.DrawImageUnscaled(toolDragCache, 0, 0);
+                                e.Graphics.Transform = world;
+                            }
+                            else if (!showPicBoxBgImage)
                                 OnPaint_drawToolPath(e.Graphics);   // draw real path if background image is not shown
 
-                            e.Graphics.DrawPath(penTool, VisuGCode.pathTool);
+                            if (toolDragCaching)
+                            { }
+                            else if (draggingToolMarker)
+                            {
+                                VisuGCode.SetToolDragPreview(toolDragTarget);
+                                e.Graphics.DrawPath(penTool, VisuGCode.pathToolDrag);
+                            }
+                            else if (penOnPaperSet && !isStreaming)
+                            {
+                                VisuGCode.SetToolDragPreview(penOnPaper);
+                                e.Graphics.DrawPath(penTool, VisuGCode.pathToolDrag);
+                            }
+                            else
+                                e.Graphics.DrawPath(penTool, VisuGCode.pathTool);
 
-                            if (shiftedDisplay)
+                            if (useDragCache)
+                            { }
+                            else if (shiftedDisplay)
                             {
                                 e.Graphics.TranslateTransform(-(float)VisuGCode.ProcessedPath.offset2DView.X, -(float)VisuGCode.ProcessedPath.offset2DView.Y);       // apply offset
                                 e.Graphics.DrawPath(penMarker, VisuGCode.pathMarker);
@@ -262,7 +350,7 @@ namespace GrblPlotter
                         }
                         e.Graphics.Transform = pBoxOrig;	// restore original matrix
 
-                        if (Properties.Settings.Default.gui2DInfoShow)
+                        if (Properties.Settings.Default.gui2DInfoShow && !toolDragCaching)
                         {
                             Point stringpos = new Point(pictureBox1.PointToClient(MousePosition).X + offX, pictureBox1.PointToClient(MousePosition).Y + offY);
                             //    Point stringposRot = new Point(pictureBox1.PointToClient(MousePosition).X - 20, pictureBox1.PointToClient(MousePosition).Y + 20);
@@ -397,6 +485,12 @@ namespace GrblPlotter
                 penSimulation.Width = (float)Properties.Settings.Default.gui2DWidthSimulation * factorWidth;
 
 
+                if (writingSheetRect.HasValue)
+                {
+                    e.FillRectangle(writingSheetBrush, writingSheetRect.Value);
+                    foreach (RectangleF box in writingBoxRects)
+                        e.FillRectangle(writingBoxBrush, box);
+                }
                 if (Properties.Settings.Default.machineLimitsShow)
                     e.FillPath(brushMachineLimit, VisuGCode.pathMachineLimit);
                 if (Properties.Settings.Default.gui2DToolTableShow)
@@ -527,9 +621,65 @@ namespace GrblPlotter
 
         private SelectionHandle.Handle transformType = SelectionHandle.Handle.None;
         private GraphicsPath selectionPathOrig = new GraphicsPath();
+        private XyPoint BlackBoxPosition()
+        {
+            if (penOnPaperSet && !isStreaming) return penOnPaper;
+            return new XyPoint(Grbl.posWork.X, Grbl.posWork.Y);
+        }
+
+        private bool HitToolMarker(XyPoint pos)
+        {
+            XyPoint center = BlackBoxPosition();
+            float size = Math.Max(VisuGCode.MarkerSize, 2f);
+            return Math.Abs(pos.X - center.X) <= size && Math.Abs(pos.Y - center.Y) <= size;
+        }
+
+        /// <summary>
+        /// The black box starts on the first red stroke. Work coordinate 0,0 is not used as the pen position.
+        /// </summary>
+        private XyPoint? FirstProgramXY()
+        {
+            var pattern = new System.Text.RegularExpressions.Regex(@"^\s*G0?[01]\b.*?X\s*(-?[0-9.]+).*?Y\s*(-?[0-9.]+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            foreach (string line in fCTBCode.Lines)
+            {
+                string code = line.Split(';', '(')[0];
+                var m = pattern.Match(code);
+                if (!m.Success) continue;
+                double x, y;
+                if (double.TryParse(m.Groups[1].Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out x)
+                    && double.TryParse(m.Groups[2].Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out y))
+                    return new XyPoint(x, y);
+            }
+            return null;
+        }
+
+        private void PlacePenMarkerOnRedInk()
+        {
+            XyPoint? start = FirstProgramXY();
+            if (!start.HasValue) return;
+            penOnPaper = start.Value;
+            penOnPaperSet = true;
+            RefreshPenStartPreview();
+            pictureBox1.Invalidate();
+        }
+
+        /// <summary>
+        /// Refresh the display-only start marker. The controller's work position and coordinate
+        /// system remain authoritative; preview loading must never send a zero-setting command.
+        /// </summary>
+        private void RefreshPenStartPreview()
+        {
+            pictureBox1.Invalidate();
+        }
+
         private void PictureBox1_MouseMove(object sender, MouseEventArgs e)
         {
             mouseMovePos = e.Location;
+            if (draggingToolMarker)
+            {
+                pictureBox1.Invalidate();
+                return;
+            }
             if (e.Button == MouseButtons.Left)
             {
                 posIsMoving = true;     // mouse-move
@@ -564,6 +714,16 @@ namespace GrblPlotter
             }
             else
             {
+                if (!SelectionHandle.IsActive && HitToolMarker(picAbsPos))
+                {
+                    toolMarkerCursor = true;
+                    Cursor = Cursors.SizeAll;
+                }
+                else if (toolMarkerCursor)
+                {
+                    toolMarkerCursor = false;
+                    Cursor = Cursors.Default;
+                }
                 if (SelectionHandle.IsActive) 	// if selection frame and handles are visible, change cursor, when over handle
                 {
                     transformType = SelectionHandle.IsHandlePosition(picAbsPos);
@@ -660,8 +820,42 @@ namespace GrblPlotter
         /******************************************************************
 		***** MouseUp, proceed move, scale, rotation **********************
 		*******************************************************************/
+        private void FinishToolDrag(bool send)
+        {
+            pictureBox1.Refresh();
+            XyPoint target = toolDragTarget;
+            draggingToolMarker = false;
+            EndToolDragCache();
+            VisuGCode.ClearToolDragPreview();
+            posIsMoving = false;
+            mouseDownLeftButton = false;
+            if (!send)
+            {
+                pictureBox1.Invalidate();
+                return;
+            }
+            XyPoint from = penOnPaperSet ? penOnPaper : new XyPoint(Grbl.posWork.X, Grbl.posWork.Y);
+            double dx = target.X - from.X;
+            double dy = target.Y - from.Y;
+            if ((dx * dx) + (dy * dy) < 0.01)
+            {
+                pictureBox1.Invalidate();
+                return;
+            }
+            penOnPaper = target;
+            penOnPaperSet = true;
+            RefreshPenStartPreview();
+            StatusStripSet(2, string.Format("预览起点标记 X:{0:0.00} Y:{1:0.00}。只改变显示，不改变机器工作原点或程序坐标。", target.X, target.Y), Color.Yellow);
+            pictureBox1.Invalidate();
+        }
+
         private void PictureBox1_MouseUp(object sender, MouseEventArgs e)
         {
+            if (draggingToolMarker)
+            {
+                FinishToolDrag(true);
+                return;
+            }
             if (logDetailed || logSelection) Logger.Trace("▲▲▲ pictureBox1_MouseUp   e.x:{0} y:{1}  absPos-x:{2:0.00} y:{3:0.00}   handleActive:{4}  handle:{5}    marker:{6}    lastmarker:{7}", e.X, e.Y, picAbsPos.X, picAbsPos.Y, SelectionHandle.IsActive, transformType, markerType, lastMarkerType);
 
             Matrix tmp = pBoxTransform.Clone();
@@ -838,6 +1032,20 @@ namespace GrblPlotter
                 posMoveEnd = posMoveStart;
 
                 mouseDownLeftButton = true;
+
+                if (transformType == SelectionHandle.Handle.None && HitToolMarker(picAbsPos))
+                {
+                    if (isStreaming || (writingPageTask != null && writingPageTask.BlocksManualCommand))
+                        StatusStripSet(2, "写字进行中，不能挪动笔的起点。", Color.Fuchsia);
+                    else
+                    {
+                        BeginToolDragCache();
+                        draggingToolMarker = true;
+                        toolDragOrigin = BlackBoxPosition();
+                        toolDragTarget = toolDragOrigin;
+                        Cursor = Cursors.SizeAll;
+                    }
+                }
 
                 if (SelectionHandle.IsActive)
                 {

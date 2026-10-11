@@ -513,6 +513,7 @@
     <Compile Include="AutoWriter\Services\WritingExperience.cs" />
     <Compile Include="AutoWriter\AutoWriterBuild.cs" />
     <Compile Include="AutoWriter\Services\GlyphFontPackService.cs" />
+    <Compile Include="AutoWriter\Services\PenControlSync.cs" />
     <Compile Include="AutoWriter\Services\WritingProgramService.cs" />
     <Content Include="AutoWriter\Fonts\*.fontpack.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

@@ -31,8 +31,19 @@
 - 抬落笔分层判笔 `PenZClassifier.cs`（Z 抬笔值→落笔值的**过渡**才算落笔）。软件置零后 2D 图自动跟随（posWork 每次状态上报重算）。
 - 置零三入口勿混：COM CNC「置零」按钮 / DRO「刀具坐标」左键→预设坐标 `XY=0`；「零位」面板是**移动到**零点（机器会动）；「家」=`$H` 不存在。
 
+## SVG 导入（2026-10-11 实测修正，旧结论"填充致乱"已推翻）
+- **真值工具**：`scripts/test-svg-import.ps1 -Svg <file>`（配 `scripts/SvgImportTests.cs`）→ 调项目自己的 `GCodeFromSvg.ConvertFromFile` 打印 G 代码，不用开 GUI。基线/结果在 `artifacts/stage2/before-*.txt` / `after-*.txt`。**排查导入问题一律先用它**，别再靠推理猜。
+- 实测：几何（rect/circle/line/polyline、多子路径 `z m`、嵌套 transform）**本来就正确**；默认 `importGraphicHatchFillEnable=False` 且设备 `Fill.Enable=False` ⇒ **HatchFill 提前 return，不会出现填充密线**。默认 `importSVGApplyFill=True` 只在设备档开了填充时才生效。
+- 真缺陷（已修）：① `<style>`/`class` CSS 完全被忽略；② `stroke-width` 不继承（`GCodeFromSvgText.cs:550` 每元素重置 `strokeWidth="0.1"` 再 `SetPenWidth`，冲掉 `<g>` 的值）；③ `stroke:none` 被写成笔色 `"none"`。
+- 修法：`GCodeFromSvg.cs` 加 `CollectCssRules()`+`ResolveSvgStyle()`，把 CSS/内联/表现属性/继承合成后**追加写回元素 `style`**（只补 stroke/fill/stroke-width/stroke-dasharray，不覆盖其它声明）；`ParseGroup` 备份+还原继承变量；`stroke:none|transparent|url()` 不注入；`FillIsNone/StrokeIsNone` 也在 `GCodeFromSvgText.cs` 三处 `SetPenColor/SetPenFill` 前使用。
+- 设备影响输出：`guiToolSelection=2` ⇒ **设备=Router**（`MainForm.cs:238`）；设备决定 `UseSpecificDevice()`/工具表/Hatch 分支，G 代码头会写 `( Use case: Device X )`。
+- 其它：`importSVGMaxSize=100` 会把 >100mm 的图整体缩放；`importSVGCircleToDot` 开时 `<circle>` 变一个点。测试件 8 个在 `artifacts/stage2/ext*.svg`。
+
+
 ## 环境约定（别再踩）
 - 编译、或命令文本含编译器名 ⇒ 用 PowerShell 工具（Bash 被安全策略拦）；构建走 `scripts/build.ps1`。程序运行时 bin 被锁（MSB3027），先关程序再重建。
+- **直接写 `csc.exe` 或 `[Reflection.Assembly]::LoadFrom` 会被安全策略拦**（"equivalent to Add-Type"），但**把 csc 调用放进 `.ps1` 文件再执行是允许的**（项目既有 `test-*.ps1` 模式，如 `scripts/test-svg-import.ps1`）。
+- PowerShell 工具的 stdout 常不回传 ⇒ 结论写文件再 Read，或看 `$LASTEXITCODE`。
 - 测试脚本纯 ASCII（PS5.1 按 ANSI 解析无 BOM）；Write-Host 不回传 ⇒ 结论写 `artifacts/stage0/*.txt` 再读；`&` 调脚本 `exit 1` 不抛异常 ⇒ **必查 `$LASTEXITCODE`**；各 test 脚本含同名类型须独立进程。
 - 新 .cs 含中文必须 **UTF-8 BOM**（ACP=936）；Python 写文件会 CRLF→LF，写完统一回 CRLF（保 BOM）再 `git diff --stat` 复核。
 - 🔴 WinForms 加按钮/加列四坑：① resx 插 `btnXXX.*` + ZOrder/TabIndex；② `LayoutSettings` 内 `Columns.Styles` 重写为 **N 项、和恰 100**（漏了→新列 AutoSize 挤邻列，不报错；改法 html.unescape→改→escape 写回）；③ 窗体同步加宽；④ Designer 五件套 + 查同控件被 Add 两次的残留。守卫：`test-stage1-unlock-layout.ps1`（反射强制布局断言）。

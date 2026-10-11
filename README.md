@@ -124,7 +124,7 @@ Main GUI
  <img width="1354" height="841" alt="image" src="https://github.com/user-attachments/assets/2ab18ffc-c9ba-4dfd-a919-62132cbe7709" />
 
 Separate serial COM window(s) - one for the CNC, one for the tool changer (or 4th axis)  
-![GRBL-Plotter COM interface](doc/GRBLPlotter_COM2.png?raw=true "Serial connection") ![2nd GRBL control](doc/GRBLPlotter_Control_COM2.png?raw=true "Serial connection")
+![GRBL-Plotter COM interface](doc/images/GRBLPlotter_COM2.png?raw=true "Serial connection") ![2nd GRBL control](doc/images/GRBLPlotter_Control_COM2.png?raw=true "Serial connection")
 
 Setup import / GCode conversion  
 ![GRBL-Plotter Setup1.1](doc/screenshots/en_1325_setup_1_1.png?raw=true "Setup1.1") 
@@ -163,14 +163,14 @@ Setup shape recogniton for fiducial camera
 ![GRBL-Plotter Setup10](doc/screenshots/en_1325_setup_10.png?raw=true "Setup10")  
     
 Text import  
-![GRBL-Plotter Text](doc/GRBLPlotter_Text.png?raw=true "Text conversion")  
+![GRBL-Plotter Text](doc/images/GRBLPlotter_Text.png?raw=true "Text conversion")  
   
 Picture import  
 ![GRBL-Plotter Image](doc/ImageImport/ImageImport1.png?raw=true "Image import")  
   
 Different scaling options  
-![GRBL-Plotter Scaling](doc/GRBLPlotter_scaling.png?raw=true "GCode scaling")  
+![GRBL-Plotter Scaling](doc/images/GRBLPlotter_scaling.png?raw=true "GCode scaling")  
 
 Feed rate overrid for Version 0.9 and 1.1  
-![GRBL-Plotter Override](doc/GRBLPlotter_override.png?raw=true "GCode override") ![GRBL-Plotter Override](doc/GRBLPlotter_override2.png?raw=true "GCode override")
+![GRBL-Plotter Override](doc/images/GRBLPlotter_override.png?raw=true "GCode override") ![GRBL-Plotter Override](doc/images/GRBLPlotter_override2.png?raw=true "GCode override")
 

@@ -1024,6 +1024,20 @@ namespace GrblPlotter
         }
 
 
+        internal static readonly GraphicsPath pathToolDrag = new GraphicsPath();
+
+        /// <summary>Draw the black pen marker at a dragged position without changing the reported work position.</summary>
+        internal static void SetToolDragPreview(XyPoint position)
+        {
+            CreateMarker(pathToolDrag, position, Math.Max(MarkerSize, 0.2f), 2);
+        }
+
+        internal static void ClearToolDragPreview()
+        {
+            lock (pathDrawLock)
+                pathToolDrag.Reset();
+        }
+
         public static float MarkerSize = 10;
         public static void CreateMarkerPath()
         { CreateMarkerPath(MarkerSize); }

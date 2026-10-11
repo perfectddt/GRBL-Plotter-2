@@ -121,10 +121,10 @@ Linux用户请查看这个链接 由metzger100编写: [GRBL-Plotter-Linux](https
 
 ### 截图
 主界面
-![GRBL-Plotter GUI](doc/GRBLPlotter_GUI.png?raw=true "Main GUI") 
+![GRBL-Plotter GUI](doc/images/GRBLPlotter_GUI.png?raw=true "Main GUI") 
 
 单独的串行 COM 窗口 - 一个用于 CNC，一个用于换刀装置（或第 4 轴）
-![GRBL-Plotter COM interface](doc/GRBLPlotter_COM2.png?raw=true "Serial connection") ![2nd GRBL control](doc/GRBLPlotter_Control_COM2.png?raw=true "Serial connection")
+![GRBL-Plotter COM interface](doc/images/GRBLPlotter_COM2.png?raw=true "Serial connection") ![2nd GRBL control](doc/images/GRBLPlotter_Control_COM2.png?raw=true "Serial connection")
 
 导入/GCode 转换设置
 ![GRBL-Plotter Setup1.1](doc/screenshots/en_1325_setup_1_1.png?raw=true "Setup1.1") 
@@ -161,13 +161,13 @@ Setup user defined buttons
 ![GRBL-Plotter Setup10](doc/screenshots/en_1325_setup_10.png?raw=true "Setup10")  
     
 导入文字  
-![GRBL-Plotter Text](doc/GRBLPlotter_Text.png?raw=true "Text conversion")  
+![GRBL-Plotter Text](doc/images/GRBLPlotter_Text.png?raw=true "Text conversion")  
 
 导入图片  
 ![GRBL-Plotter Image](doc/ImageImport/ImageImport1.png?raw=true "Image import")  
 
 不同的缩放选项  
-![GRBL-Plotter Scaling](doc/GRBLPlotter_scaling.png?raw=true "GCode scaling")  
+![GRBL-Plotter Scaling](doc/images/GRBLPlotter_scaling.png?raw=true "GCode scaling")  
 
 版本 0.9 和 1.1 的进给速率倍率  
-![GRBL-Plotter Override](doc/GRBLPlotter_override.png?raw=true "GCode override") ![GRBL-Plotter Override](doc/GRBLPlotter_override2.png?raw=true "GCode override")
+![GRBL-Plotter Override](doc/images/GRBLPlotter_override.png?raw=true "GCode override") ![GRBL-Plotter Override](doc/images/GRBLPlotter_override2.png?raw=true "GCode override")

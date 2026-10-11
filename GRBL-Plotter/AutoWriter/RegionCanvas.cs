@@ -60,6 +60,11 @@ namespace GrblPlotter.AutoWriter
         internal bool SnapToGrid;
         internal bool ShowGrid = true;
         internal int[] Warnings = new int[0];
+        // Pen-start picking: while PenStartPickMode is on, a left click reports the page
+        // millimetre point (and shows it as a black marker); right click / Esc reports null.
+        internal bool PenStartPickMode;
+        internal PointF? PenStartMm;
+        internal Action<PointF?> PenStartPicked;
         private PointF? dragStart;
         private PointF dragEnd;
         private DragMode dragMode;
@@ -117,6 +122,28 @@ namespace GrblPlotter.AutoWriter
         protected override void OnMouseDown(MouseEventArgs e)
         {
             base.OnMouseDown(e);
+            if (PenStartPickMode)
+            {
+                Focus();
+                if (Sheet == null || PageRectangle().IsEmpty)
+                {
+                    PenStartPickMode = false; Cursor = Cursors.Default;
+                    if (PenStartPicked != null) PenStartPicked(null);
+                    return;
+                }
+                if (e.Button == MouseButtons.Left)
+                {
+                    PointF mm = ToPage(e.Location, true);
+                    PenStartMm = mm; PenStartPickMode = false; Cursor = Cursors.Default; Invalidate();
+                    if (PenStartPicked != null) PenStartPicked(mm);
+                }
+                else if (e.Button == MouseButtons.Right)
+                {
+                    PenStartPickMode = false; Cursor = Cursors.Default; Invalidate();
+                    if (PenStartPicked != null) PenStartPicked(null);
+                }
+                return;
+            }
             if (!DrawEnabled || Sheet == null) return;
             Focus();
             if (e.Button == MouseButtons.Right)
@@ -148,6 +175,7 @@ namespace GrblPlotter.AutoWriter
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
+            if (PenStartPickMode) { Cursor = Cursors.Cross; return; }
             if (panning) { Pan = new PointF(panOrigin.X + e.X - panStart.X, panOrigin.Y + e.Y - panStart.Y); Invalidate(); return; }
             if (dragMode == DragMode.Create && dragStart.HasValue) { dragEnd = ToPage(e.Location, true); Invalidate(); return; }
             if (dragMode == DragMode.Move && Selected >= 0) MoveSelected(ToPage(e.Location, false));
@@ -222,6 +250,12 @@ namespace GrblPlotter.AutoWriter
         protected override void OnKeyDown(KeyEventArgs e)
         {
             base.OnKeyDown(e);
+            if (PenStartPickMode && e.KeyCode == Keys.Escape)
+            {
+                PenStartPickMode = false; Cursor = Cursors.Default; Invalidate();
+                if (PenStartPicked != null) PenStartPicked(null);
+                e.Handled = true; return;
+            }
             if (!e.Control) return;
             if (e.KeyCode == Keys.Z && UndoRequested != null) { UndoRequested(); e.Handled = true; }
             if (e.KeyCode == Keys.Y && RedoRequested != null) { RedoRequested(); e.Handled = true; }
@@ -254,6 +288,14 @@ namespace GrblPlotter.AutoWriter
             }
             e.Graphics.DrawString("蓝框不写  红线是本页笔迹", Font, Brushes.DimGray, page.Left + 4, page.Bottom - Font.Height - 4);
             if (dragStart.HasValue) { var a = ToPixel(dragStart.Value.X, dragStart.Value.Y); var b = ToPixel(dragEnd.X, dragEnd.Y); e.Graphics.DrawRectangle(Pens.OrangeRed, Math.Min(a.X, b.X), Math.Min(a.Y, b.Y), Math.Abs(a.X - b.X), Math.Abs(a.Y - b.Y)); }
+            if (PenStartMm.HasValue)
+            {
+                PointF m = ToPixel(PenStartMm.Value.X, PenStartMm.Value.Y);
+                e.Graphics.DrawLine(Pens.Black, m.X - 7, m.Y, m.X + 7, m.Y);
+                e.Graphics.DrawLine(Pens.Black, m.X, m.Y - 7, m.X, m.Y + 7);
+                e.Graphics.FillEllipse(Brushes.Black, m.X - 3, m.Y - 3, 6, 6);
+                e.Graphics.DrawString("笔起点", Font, Brushes.Black, m.X + 7, m.Y + 3);
+            }
         }
         private void DrawGrid(Graphics graphics)
         {

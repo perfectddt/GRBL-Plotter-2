@@ -36,7 +36,11 @@ namespace GrblPlotter
             if (string.IsNullOrWhiteSpace(program))
                 throw new InvalidOperationException("没有可载入的写字程序。");
 
+            RectangleF? sheet = writingSheetRect;
+            RectangleF[] boxes = writingBoxRects;
             InsertCodeFromForm(program, "from AutoWriter writing");
+            SetWritingSheetOverlay(sheet, boxes);
+            PlacePenMarkerOnRedInk();
             boundWritingProgram = program;
             boundWritingStale = false;
         }
@@ -59,9 +63,13 @@ namespace GrblPlotter
                 throw new InvalidOperationException("没有可载入的写字页。");
             boundWritingProgram = program;
             boundWritingStale = false;
+            RectangleF? sheet = writingSheetRect;
+            RectangleF[] boxes = writingBoxRects;
             NewCodeStart(false);
             SetFctbCodeText(program);
             NewCodeEnd();
+            SetWritingSheetOverlay(sheet, boxes);
+            PlacePenMarkerOnRedInk();
         }
 
         private void ConfirmWritingPaperChange()

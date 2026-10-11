@@ -467,8 +467,8 @@ namespace GrblPlotter
                 if (textDecoration == "underline") fontStyle |= System.Drawing.FontStyle.Underline;
 
                 if (strokeWidth != "") { Graphic.SetPenWidth(strokeWidth); }
-                if (stroke != "") { Graphic.SetPenColor(stroke.StartsWith("#") ? stroke.Substring(1) : stroke); }  //Logger.Info("SetPenColor '{0}'", stroke); 
-                if ((fill != "") && (fill != "none")) { Graphic.SetPenFill(fill.StartsWith("#") ? fill.Substring(1) : fill); }     //Logger.Info("SetPenFill  '{0}'", FillToolListElements); 
+                if (!StrokeIsNone(stroke)) { Graphic.SetPenColor(stroke.StartsWith("#") ? stroke.Substring(1) : stroke); }  //Logger.Info("SetPenColor '{0}'", stroke); 
+                if (!FillIsNone(fill)) { Graphic.SetPenFill(fill.StartsWith("#") ? fill.Substring(1) : fill); }     //Logger.Info("SetPenFill  '{0}'", FillToolListElements); 
 
                 try
                 {
@@ -737,8 +737,8 @@ namespace GrblPlotter
                 Logger.Trace(" ● Set width:{0}  stroke:{1}  fill:{2}", strokeWidth, stroke, fill);
 
                 if (strokeWidth != "") { Graphic.SetPenWidth(strokeWidth); }
-                if (stroke != "") { Graphic.SetPenColor(stroke.StartsWith("#") ? stroke.Substring(1) : stroke); }
-                if ((fill != "") && (fill != "none")) { Graphic.SetPenFill(fill.StartsWith("#") ? fill.Substring(1) : fill); }
+                if (!StrokeIsNone(stroke)) { Graphic.SetPenColor(stroke.StartsWith("#") ? stroke.Substring(1) : stroke); }
+                if (!FillIsNone(fill)) { Graphic.SetPenFill(fill.StartsWith("#") ? fill.Substring(1) : fill); }
 
                 double ox = GetX(0) + GetdX(0);
                 double oy = GetY(0) + GetdY(0) - yOffset;
@@ -848,8 +848,8 @@ namespace GrblPlotter
                     Logger.Trace(" ● Set width:{0}  stroke:{1}  fill:{2}", strokeWidth, stroke, fill);
 
                     if (strokeWidth != "") { Graphic.SetPenWidth(strokeWidth); }
-                    if (stroke != "") { Graphic.SetPenColor(stroke.StartsWith("#") ? stroke.Substring(1) : stroke); }
-                    if ((fill != "") && (fill != "none")) { Graphic.SetPenFill(fill.StartsWith("#") ? fill.Substring(1) : fill); }
+                    if (!StrokeIsNone(stroke)) { Graphic.SetPenColor(stroke.StartsWith("#") ? stroke.Substring(1) : stroke); }
+                    if (!FillIsNone(fill)) { Graphic.SetPenFill(fill.StartsWith("#") ? fill.Substring(1) : fill); }
 
                     using (var path = new GraphicsPath())       // place glyphs
                     {

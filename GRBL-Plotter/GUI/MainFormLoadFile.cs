@@ -327,6 +327,8 @@ namespace GrblPlotter
         private void NewCodeStart(bool cleanupGraphic = true)
         {
             Logger.Trace("===== newCodeStart - clear 2D-view and editor");
+            writingSheetRect = null;
+            writingBoxRects = new RectangleF[0];
             GcodeSummary.MetadataUse = false;
             stopwatch.Start();
             Cursor.Current = Cursors.WaitCursor;

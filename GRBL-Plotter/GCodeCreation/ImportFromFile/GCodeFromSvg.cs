@@ -369,6 +369,9 @@ namespace GrblPlotter
             for (int i = 0; i < matrixGroup.Length; i++)     // preset sub transform matrixes
                 matrixGroup[i].SetIdentity();
 
+            ResetSvgStyle();                            // 2026-10-11 reset CSS rules and inherited style values
+            CollectCssRules(svgCode);                   // 2026-10-11 read <style> blocks of external SVG files
+
             ParseGlobals(svgCode);                      // parse main svg elements
 
             ParseUse(svgCode, 1);
@@ -611,11 +614,19 @@ namespace GrblPlotter
                     Logger.Trace("●●●● ParseGroup Level:{0} Elements:{1} Id:{2}", level, svgCode.Elements(nspace + "g").Count(), id);
                 }
                 ParseTransform(groupElement, true, level);      // transform will be applied in gcodeMove
+                string inheritedStrokeBackup = inheritStroke;   // 2026-10-11 keep inheritance scope of this group
+                string inheritedFillBackup = inheritFill;
+                string inheritedWidthBackup = inheritStrokeWidth;
+                string inheritedDashBackup = inheritDashArray;
                 ParseAttributs(groupElement, true);             // process color and stroke-dasharray
                 ParseUse(groupElement, level);
                 ParseBasicElements(groupElement, level);
                 ParsePath(groupElement, level);
                 ParseGroup(groupElement, level + 1);
+                inheritStroke = inheritedStrokeBackup;          // leave the group -> restore parent scope
+                inheritFill = inheritedFillBackup;
+                inheritStrokeWidth = inheritedWidthBackup;
+                inheritDashArray = inheritedDashBackup;
             }
             return;
         }
@@ -701,6 +712,167 @@ namespace GrblPlotter
         /// <summary>
         /// Parse stroke attributes
         /// </summary>
+        /*********************************************************************************************************
+         ** 2026-10-11 support for external SVG files:
+         ** - collect CSS rules from <style> elements (.class / #id / element selectors)
+         ** - resolve effective stroke / fill / stroke-width / stroke-dasharray from
+         **   inheritance (svg -> g -> g -> element), CSS rules and inline style / presentation attributes
+         ** - write the resolved values back into the element's style attribute, so all existing readers
+         **   (ParseAttributs and globalTextProp.Update) work on the real values
+         *********************************************************************************************************/
+        private sealed class SvgCssRule
+        {
+            public string Selector;
+            public string Declarations;
+            public int Specificity;
+        }
+        private sealed class SvgOriginalStyle
+        {
+            public readonly Dictionary<string, string> Values = new Dictionary<string, string>();
+        }
+        private sealed class SvgDeclaration
+        {
+            public string Value;
+            public bool Important;
+            public int Specificity;
+        }
+        private static readonly List<SvgCssRule> svgCssRules = new List<SvgCssRule>();
+        private static readonly string[] svgStyleProperties = { "stroke", "fill", "stroke-width", "stroke-dasharray", "color" };
+        // Retained for the existing group scope bookkeeping. Effective styles are resolved from ancestors.
+        private static string inheritStroke = "";
+        private static string inheritFill = "";
+        private static string inheritStrokeWidth = "";
+        private static string inheritDashArray = "";
+
+        private static void ResetSvgStyle()
+        {
+            svgCssRules.Clear();
+            inheritStroke = inheritFill = inheritStrokeWidth = inheritDashArray = "";
+        }
+
+        private static void CollectCssRules(XElement svgCode)
+        {
+            svgCssRules.Clear();
+            if (svgCode == null) return;
+            foreach (var styleElement in svgCode.Descendants(nspace + "style"))
+            {
+                string css = Regex.Replace(styleElement.Value, @"/\*.*?\*/", "", RegexOptions.Singleline);
+                // Nested at-rules are unsupported; never apply their inner rules unconditionally.
+                css = Regex.Replace(css, @"@[^;{]+(?:;|\{(?:[^{}]|\{[^{}]*\})*\})", "");
+                foreach (Match rule in Regex.Matches(css, @"([^{}]+)\{([^{}]*)\}"))
+                    foreach (string selector in rule.Groups[1].Value.Split(','))
+                    {
+                        string key = selector.Trim();
+                        if (!Regex.IsMatch(key, @"^(?:[.#][A-Za-z_][\w-]*|[A-Za-z_][\w-]*|\*)$"))
+                        {
+                            Logger.Warn("Unsupported SVG CSS selector ignored: {0}", key);
+                            continue;
+                        }
+                        svgCssRules.Add(new SvgCssRule { Selector = key, Declarations = rule.Groups[2].Value,
+                            Specificity = key.StartsWith("#") ? 100 : key.StartsWith(".") ? 10 : key == "*" ? 0 : 1 });
+                    }
+            }
+        }
+
+        private static bool MatchesSvgRule(XElement element, string selector)
+        {
+            if (selector == "*") return true;
+            if (selector.StartsWith("#")) return (string)element.Attribute("id") == selector.Substring(1);
+            if (selector.StartsWith("."))
+                return ((string)element.Attribute("class") ?? "").Split(new char[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Contains(selector.Substring(1));
+            return element.Name.LocalName == selector;
+        }
+
+        private static void AddSvgDeclarations(Dictionary<string, SvgDeclaration> result, string text, int specificity)
+        {
+            foreach (string item in text.Split(';'))
+            {
+                int colon = item.IndexOf(':');
+                if (colon < 0) continue;
+                string property = item.Substring(0, colon).Trim().ToLowerInvariant();
+                if (!svgStyleProperties.Contains(property)) continue;
+                string value = item.Substring(colon + 1).Trim();
+                bool important = Regex.IsMatch(value, @"!\s*important\s*$", RegexOptions.IgnoreCase);
+                value = Regex.Replace(value, @"!\s*important\s*$", "", RegexOptions.IgnoreCase).Trim();
+                if (value.Length == 0) continue;
+                SvgDeclaration previous;
+                if (!result.TryGetValue(property, out previous) ||
+                    (important && !previous.Important) ||
+                    (important == previous.Important && specificity >= previous.Specificity))
+                    result[property] = new SvgDeclaration { Value = value, Important = important, Specificity = specificity };
+            }
+        }
+
+        private static Dictionary<string, string> EffectiveSvgStyle(XElement element)
+        {
+            Dictionary<string, string> inherited = element.Parent == null ?
+                new Dictionary<string, string> { { "stroke", "none" }, { "fill", "black" }, { "stroke-width", "1" }, { "stroke-dasharray", "none" }, { "color", "black" } } : EffectiveSvgStyle(element.Parent);
+            var original = element.Annotation<SvgOriginalStyle>();
+            if (original == null)
+            {
+                original = new SvgOriginalStyle();
+                original.Values["style"] = (string)element.Attribute("style") ?? "";
+                foreach (string property in svgStyleProperties) original.Values[property] = (string)element.Attribute(property) ?? "";
+                element.AddAnnotation(original);
+            }
+            var declarations = new Dictionary<string, SvgDeclaration>();
+            foreach (string property in svgStyleProperties)
+                AddSvgDeclarations(declarations, property + ":" + original.Values[property], -1);
+            foreach (SvgCssRule rule in svgCssRules)
+                if (MatchesSvgRule(element, rule.Selector)) AddSvgDeclarations(declarations, rule.Declarations, rule.Specificity);
+            AddSvgDeclarations(declarations, original.Values["style"], 1000);
+            var effective = new Dictionary<string, string>(inherited);
+            foreach (var pair in declarations)
+            {
+                string value = pair.Value.Value;
+                if (value == "inherit" || value == "unset") continue;
+                if (value == "initial") value = pair.Key == "fill" || pair.Key == "color" ? "black" : pair.Key == "stroke-width" ? "1" : "none";
+                effective[pair.Key] = value;
+            }
+            foreach (string property in new[] { "stroke", "fill" })
+                if (effective[property] == "currentColor") effective[property] = effective["color"];
+            return effective;
+        }
+
+        private static void ResolveSvgStyle(XElement element)
+        {
+            var effective = EffectiveSvgStyle(element);
+            string style = "";
+            foreach (string property in svgStyleProperties)
+            {
+                style = AppendStyle(style, property, effective[property]);
+                // Legacy readers also inspect presentation attributes after reading style.
+                element.SetAttributeValue(property, effective[property]);
+            }
+            element.SetAttributeValue("style", style);
+        }
+
+        private static string AppendStyle(string style, string property, string value)
+        {
+            if (style.Length > 0)
+            {
+                style = style.TrimEnd();
+                if (!style.EndsWith(";")) style += ";";
+            }
+            return style + property + ":" + value + ";";
+        }
+
+        /// <summary>true if the fill value means 'do not fill'</summary>
+        private static bool FillIsNone(string fill)
+        {
+            if (string.IsNullOrEmpty(fill)) return true;
+            string tmp = fill.ToLower();
+            return (tmp == "none") || (tmp == "transparent") || (tmp.StartsWith("url("));
+        }
+
+        /// <summary>true if the stroke value means 'line is not drawn'</summary>
+        private static bool StrokeIsNone(string stroke)
+        {
+            if (string.IsNullOrEmpty(stroke)) return true;
+            string tmp = stroke.ToLower();
+            return (tmp == "none") || (tmp == "transparent") || (tmp.StartsWith("url("));
+        }
+
         private static string attributeStroke = "";
         private static string attributeFill = "";
         private static bool ParseAttributs(XElement element, bool isGroup = false)
@@ -710,24 +882,35 @@ namespace GrblPlotter
             bool filterKeepColor = false;
             bool filterKeepWidth = false;
 
+            ResolveSvgStyle(element);                       // CSS + inheritance -> style-attribute
+
             attributeStroke = "";
             attributeFill = "";
             if (element.Attribute("style") != null)
             {
                 attributeStroke = GetStyleProperty(element, "stroke");  // if is stroke not set, use FillToolListElements color
+                if (StrokeIsNone(attributeStroke)) attributeStroke = "";        // stroke:none / url(..) -> no pen color
                 if (logEnable) Logger.Trace("  ParseAttributs style stroke:'{0}'", attributeStroke);
                 logSource = "ParseAttributs: stroke: " + attributeStroke;
-                if (attributeStroke.Length > 1)
+                if (attributeStroke.Length > 0)
                     filterKeepColor = Graphic.SetPenColor(globalTextProp.stroke = attributeStroke.StartsWith("#") ? attributeStroke.Substring(1) : attributeStroke);
 
                 attributeFill = GetStyleProperty(element, "fill");
                 if (logEnable) Logger.Trace("  ParseAttributs style fill:'{0}'", attributeFill);
                 logSource = "ParseAttributs: fill: " + attributeFill;
-                if ((attributeFill.Length > 1))// && (attributeFill != "none"))
+                if (attributeFill.Length > 1)
                 {
-                    if (string.IsNullOrEmpty(attributeStroke))
-                        Graphic.SetPenColor(globalTextProp.fill = attributeFill.StartsWith("#") ? attributeFill.Substring(1) : attributeFill);
-                    Graphic.SetPenFill(globalTextProp.fill = attributeFill.StartsWith("#") ? attributeFill.Substring(1) : attributeFill);
+                    if (FillIsNone(attributeFill))      // 2026-10-11 fill:none must suppress hatch fill (and must not become a pen color)
+                    {
+                        attributeFill = "none";
+                        Graphic.SetPenFill("none");
+                    }
+                    else
+                    {
+                        if (string.IsNullOrEmpty(attributeStroke))
+                            Graphic.SetPenColor(globalTextProp.fill = attributeFill.StartsWith("#") ? attributeFill.Substring(1) : attributeFill);
+                        Graphic.SetPenFill(globalTextProp.fill = attributeFill.StartsWith("#") ? attributeFill.Substring(1) : attributeFill);
+                    }
                 }
                 /*    attributeStrokeWidth = GetStyleProperty(element, "stroke-width"); -> globalTextProp.UpdateToolTip(element);
                     logSource = "ParseAttributs: stroke-width: " + attributeStrokeWidth;
@@ -740,20 +923,30 @@ namespace GrblPlotter
             if (element.Attribute("stroke") != null)    // if is stroke not set, use FillToolListElements color
             {
                 attributeStroke = element.Attribute("stroke").Value;
+                if (StrokeIsNone(attributeStroke)) attributeStroke = "";        // stroke:none -> no pen color
                 if (logEnable) Logger.Trace("  ParseAttributs stroke:'{0}'", attributeStroke);
                 logSource = "ParseAttributs: stroke2: " + attributeStroke;
-                filterKeepColor = Graphic.SetPenColor(attributeStroke.StartsWith("#") ? attributeStroke.Substring(1) : attributeStroke);
+                if (attributeStroke.Length > 0)
+                    filterKeepColor = Graphic.SetPenColor(attributeStroke.StartsWith("#") ? attributeStroke.Substring(1) : attributeStroke);
             }
             if (element.Attribute("fill") != null)
             {
                 attributeFill = element.Attribute("fill").Value;
                 if (logEnable) Logger.Trace("  ParseAttributs fill:'{0}'", attributeFill);
                 logSource = "ParseAttributs: fill2: " + attributeFill;
-                if ((attributeFill.Length > 1))
+                if (attributeFill.Length > 1)
                 {
-                    if (string.IsNullOrEmpty(attributeStroke))
-                        Graphic.SetPenColor(attributeFill.StartsWith("#") ? attributeFill.Substring(1) : attributeFill);
-                    Graphic.SetPenFill(attributeFill.StartsWith("#") ? attributeFill.Substring(1) : attributeFill);
+                    if (FillIsNone(attributeFill))      // 2026-10-11 fill:none must suppress hatch fill
+                    {
+                        attributeFill = "none";
+                        Graphic.SetPenFill("none");
+                    }
+                    else
+                    {
+                        if (string.IsNullOrEmpty(attributeStroke))
+                            Graphic.SetPenColor(attributeFill.StartsWith("#") ? attributeFill.Substring(1) : attributeFill);
+                        Graphic.SetPenFill(attributeFill.StartsWith("#") ? attributeFill.Substring(1) : attributeFill);
+                    }
                 }
             }
             /*    if (element.Attribute("stroke-width") != null)    -> globalTextProp.UpdateToolTip(element);

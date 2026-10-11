@@ -79,6 +79,18 @@ namespace GrblPlotter.AutoWriter
         private TextBox gridRowsInput;
         private TextBox gridColumnsInput;
         private CheckBox drawGridLines;
+        private TextBox penStartX;
+        private TextBox penStartY;
+        private Button penStartButton;
+        private ToolTip penStartTips;
+        /// <summary>Signature of the X/Y values last applied to the machine (or read back); drives the dual role of the 笔起点 button.</summary>
+        private string penStartApplied;
+
+        /// <summary>Page rectangle and writing boxes in work coordinates for the main view background.</summary>
+        internal Action<RectangleF?, RectangleF[]> SheetOverlay { get; set; }
+        /// <summary>Set the black start point in work coordinates; returns a refusal or null. The pen does not move.</summary>
+        internal Func<double, double, string> PenStartRequested { get; set; }
+        internal Func<double[]> PenStartQuery { get; set; }
 
         internal MachineSetupForm()
             : this(null)
@@ -348,11 +360,28 @@ namespace GrblPlotter.AutoWriter
                 if (!regionsEnabled.Checked) throw new InvalidOperationException("请先勾选多区域单页。");
                 BuildWritingStrokes();
             }));
+            toolbar.Controls.Add(new Label { Text = "黑色起点 X", AutoSize = true, Margin = new Padding(8, 7, 0, 0) });
+            penStartX = new TextBox { Width = 56, Text = "0" };
+            penStartX.KeyDown += PenStartBoxKeyDown;
+            toolbar.Controls.Add(penStartX);
+            toolbar.Controls.Add(new Label { Text = "Y(向下)", AutoSize = true, Margin = new Padding(4, 7, 0, 0) });
+            penStartY = new TextBox { Width = 56, Text = "0" };
+            penStartY.KeyDown += PenStartBoxKeyDown;
+            toolbar.Controls.Add(penStartY);
+            penStartButton = new Button { Text = "笔起点", AutoSize = true, Height = 30 };
+            penStartButton.Click += (sender, args) => PenStartButtonClicked();
+            toolbar.Controls.Add(penStartButton);
+            penStartTips = new ToolTip();
+            penStartTips.SetToolTip(penStartButton, "改了 X/Y 数字后点它 = 按坐标设置预览标记（不修改机器坐标）；数字没改就点它 = 进入图上点选起点。");
+            penStartTips.SetToolTip(penStartX, "输入纸面 X 毫米，回车或点「笔起点」生效。");
+            penStartTips.SetToolTip(penStartY, "输入从纸顶向下的毫米，回车或点「笔起点」生效。");
+            Button(toolbar, "读取黑色起点", ReadPenStart);
             Button(toolbar, "生成并载入主界面预览", LoadWritingIntoMainPreview);
             Button(toolbar, "保存写字项目", SaveWritingProject);
             Button(toolbar, "打开写字项目", OpenWritingProject);
-            regionInfo = new Label { Dock = DockStyle.Bottom, Height = 64, Text = "空白处拖动画新框。拖框内部移动，拖橙点改大小。滚轮缩放，右键平移，都不改变毫米尺寸。蓝框不写，红线是本页笔迹。" };
+            regionInfo = new Label { Dock = DockStyle.Bottom, Height = 64, Text = "空白处拖动画新框。拖框内部移动，拖橙点改大小。滚轮缩放，右键平移，都不改变毫米尺寸。蓝框不写，红线是本页笔迹。改过 X/Y 数字后点「笔起点」= 按坐标设置预览标记；数字没改时点它 = 进图上点选（左键定点，右键或 Esc 取消）。" };
             regionCanvas = new RegionCanvas { Regions = regions };
+            regionCanvas.PenStartPicked = AcceptPickedPenStart;
             regionCanvas.GestureStarted = () => gestureBefore = regions.ConvertAll(item => item.Clone());
             regionCanvas.GestureFinished = AcceptRegionGesture;
             regionCanvas.UndoRequested = UndoRegions;
@@ -374,7 +403,7 @@ namespace GrblPlotter.AutoWriter
             regionCanvas.EditRequested = EditRegion;
             regionsEnabled.CheckedChanged += (sender, args) => { UpdatePageMode(); InvalidateWriting(); };
             tab.Controls.Add(regionCanvas); tab.Controls.Add(regionInfo); tab.Controls.Add(toolbar); tabs.TabPages.Add(tab);
-            tab.Enter += (sender, args) => RefreshRegionCanvas();
+            tab.Enter += (sender, args) => { RefreshRegionCanvas(); ReadPenStart(); };
         }
         private void ManageRegionTemplates()
         {
@@ -827,8 +856,8 @@ namespace GrblPlotter.AutoWriter
             Execute(() => {
                 if (pageTask != null && pageTask.IsActive) throw new InvalidOperationException("多页任务进行中，不能把图片或 SVG 载入主界面。");
                 if (importGraphic == null) throw new InvalidOperationException("请从主界面打开本窗口。图片和 SVG 使用主界面原有导入，不进入写字分页。");
-                importGraphic();
-                status.Text = "已打开主界面导入。图片和 SVG 走原有入口，不写进写字页。";
+                using (PenControlSync.Begin(profile, BuildWritingOptions())) importGraphic();
+                status.Text = "已打开主界面导入；笔控仅用于本次转换，不修改设备档或工具表。";
             });
         }
         private void MakeGrid()
@@ -1067,8 +1096,151 @@ namespace GrblPlotter.AutoWriter
                 if (loadIntoPreview == null)
                     throw new InvalidOperationException("当前入口未连接主界面预览；请从主界面 AutoWriter 菜单打开本窗口。");
                 loadIntoPreview(writingText.Text);
+                PublishSheetOverlay();
                 status.Text = "已载入当前第 " + pageSelector.Value + " 页；换纸并确认相同工作原点后手动开始。不会自动发送或自动续页。";
             });
+        }
+
+        private int AxisSign(bool xAxis)
+        {
+            CoordinateMapping map = profile == null ? null : profile.AxisMapping;
+            int? value = map == null ? null : (xAxis ? map.XDirection : map.YDirection);
+            return value.HasValue && value.Value < 0 ? -1 : 1;
+        }
+
+        /// <summary>Paper millimetres (left, down) to work coordinates, the same mapping the generator uses.</summary>
+        private PointF PaperToWork(double xMm, double downMm)
+        {
+            return new PointF((float)(xMm * AxisSign(true)), (float)(-downMm * AxisSign(false)));
+        }
+
+        private RectangleF PaperRect(double x, double down, double width, double height)
+        {
+            PointF a = PaperToWork(x, down), b = PaperToWork(x + width, down + height);
+            return RectangleF.FromLTRB(Math.Min(a.X, b.X), Math.Min(a.Y, b.Y), Math.Max(a.X, b.X), Math.Max(a.Y, b.Y));
+        }
+
+        private void PublishSheetOverlay()
+        {
+            if (SheetOverlay == null) return;
+            try
+            {
+                if (!pageEnabled.Checked) { SheetOverlay(null, new RectangleF[0]); return; }
+                PageLayoutOptions sheet = ReadPage();
+                var boxes = new List<RectangleF>();
+                if (regionsEnabled.Checked)
+                {
+                    foreach (WritingRegion r in regions)
+                        if (r != null) boxes.Add(PaperRect(r.X, r.Y, r.Width, r.Height));
+                }
+                else
+                    boxes.Add(PaperRect(sheet.LeftMm, sheet.TopMm, sheet.WidthMm - sheet.LeftMm - sheet.RightMm, sheet.HeightMm - sheet.TopMm - sheet.BottomMm));
+                SheetOverlay(PaperRect(0, 0, sheet.WidthMm, sheet.HeightMm), boxes.ToArray());
+            }
+            catch (Exception) { SheetOverlay(null, new RectangleF[0]); }
+        }
+
+        private void ApplyPenStart()
+        {
+            Execute(() =>
+            {
+                if (PenStartRequested == null)
+                    throw new InvalidOperationException("请从主界面 AutoWriter 菜单打开本窗口。");
+                double x = LayoutValue(penStartX, "黑色起点 X"), down = LayoutValue(penStartY, "黑色起点 Y");
+                PointF work = PaperToWork(x, down);
+                string refusal = PenStartRequested(work.X, work.Y);
+                if (refusal != null) throw new InvalidOperationException(refusal);
+                penStartX.Text = x.ToString("0.##", CultureInfo.InvariantCulture);
+                penStartY.Text = down.ToString("0.##", CultureInfo.InvariantCulture);
+                penStartApplied = PenStartSignature(penStartX.Text, penStartY.Text);
+                ShowPenStartMarker(x, down);
+                status.Text = "黑色起点已设在纸上 X " + x.ToString("0.##", CultureInfo.InvariantCulture) + " mm、向下 " + down.ToString("0.##", CultureInfo.InvariantCulture) + " mm。笔不动，文字不动。";
+            });
+        }
+
+        private void PenStartBoxKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.KeyCode != Keys.Enter) return;
+            ApplyPenStart();
+            e.Handled = true; e.SuppressKeyPress = true;
+        }
+
+        /// <summary>One button, two jobs: apply the typed X/Y when they were edited, otherwise arm click-to-pick on the canvas.</summary>
+        private void PenStartButtonClicked()
+        {
+            if (regionCanvas == null) return;
+            if (regionCanvas.PenStartPickMode) { EndPenStartPick(); status.Text = "已取消笔起点点选。"; return; }
+            if (penStartApplied == null || PenStartSignature(penStartX.Text, penStartY.Text) != penStartApplied)
+            {
+                ApplyPenStart();
+                status.Text += "（数字已改，按坐标设置预览标记；想图上点选请再点一次「笔起点」。）";
+                return;
+            }
+            TogglePenStartPick();
+        }
+
+        private static string PenStartSignature(string x, string y)
+        {
+            return (x ?? "").Trim() + "|" + (y ?? "").Trim();
+        }
+
+        /// <summary>Toggle click-to-pick mode: the next left click on the region canvas becomes the black start point.</summary>
+        private void TogglePenStartPick()
+        {
+            if (regionCanvas == null) return;
+            if (regionCanvas.PenStartPickMode) { EndPenStartPick(); status.Text = "已取消笔起点点选。"; return; }
+            if (PenStartRequested == null) { status.Text = "请从主界面 AutoWriter 菜单打开本窗口。"; return; }
+            if (regionCanvas.Sheet == null || regionCanvas.PageRectangle().IsEmpty) { status.Text = "请先设置有效纸张，再点选笔起点。"; return; }
+            regionCanvas.PenStartPickMode = true;
+            penStartButton.BackColor = Color.Khaki;
+            regionCanvas.Focus();
+            regionCanvas.Invalidate();
+            status.Text = "在下图点左键，该位置就是笔起点（黑色标记）。右键、Esc 或再点「笔起点」取消。";
+        }
+
+        private void EndPenStartPick()
+        {
+            if (regionCanvas != null) { regionCanvas.PenStartPickMode = false; regionCanvas.Cursor = Cursors.Default; regionCanvas.Invalidate(); }
+            if (penStartButton != null) penStartButton.BackColor = Control.DefaultBackColor;
+        }
+
+        private void AcceptPickedPenStart(PointF? picked)
+        {
+            EndPenStartPick();
+            if (!picked.HasValue) { status.Text = "已取消笔起点点选，起点未变。"; return; }
+            Execute(() =>
+            {
+                if (PenStartRequested == null)
+                    throw new InvalidOperationException("请从主界面 AutoWriter 菜单打开本窗口。");
+                double x = Math.Round(picked.Value.X, 1), down = Math.Round(picked.Value.Y, 1);
+                penStartX.Text = x.ToString("0.##", CultureInfo.InvariantCulture);
+                penStartY.Text = down.ToString("0.##", CultureInfo.InvariantCulture);
+                penStartApplied = PenStartSignature(penStartX.Text, penStartY.Text);
+                PointF work = PaperToWork(x, down);
+                string refusal = PenStartRequested(work.X, work.Y);
+                if (refusal != null) throw new InvalidOperationException(refusal);
+                ShowPenStartMarker(x, down);
+                status.Text = "笔起点已设在纸上 X " + x.ToString("0.##", CultureInfo.InvariantCulture) + " mm、向下 " + down.ToString("0.##", CultureInfo.InvariantCulture) + " mm。笔不动，文字不动。";
+            });
+        }
+
+        private void ShowPenStartMarker(double xMm, double downMm)
+        {
+            if (regionCanvas == null) return;
+            regionCanvas.PenStartMm = new PointF((float)xMm, (float)downMm);
+            regionCanvas.Invalidate();
+        }
+
+        private void ReadPenStart()
+        {
+            if (PenStartQuery == null) return;
+            double[] work = PenStartQuery();
+            if (work == null || work.Length < 2) return;
+            double x = work[0] * AxisSign(true), down = -work[1] * AxisSign(false);
+            penStartX.Text = x.ToString("0.##", CultureInfo.InvariantCulture);
+            penStartY.Text = down.ToString("0.##", CultureInfo.InvariantCulture);
+            penStartApplied = PenStartSignature(penStartX.Text, penStartY.Text);
+            ShowPenStartMarker(x, down);
         }
 
         private void ApplyPenPreview()
@@ -1082,6 +1254,7 @@ namespace GrblPlotter.AutoWriter
                 Properties.Settings.Default.gui2DPenZUpValue = penUp.Value;
             if (penDown.HasValue)
                 Properties.Settings.Default.gui2DPenZDownValue = penDown.Value;
+
         }
 
         private void FreezePageTask()
@@ -1107,6 +1280,7 @@ namespace GrblPlotter.AutoWriter
                 }
                 ApplyPenPreview();
                 loadBoundPage(program);
+                PublishSheetOverlay();
                 pageTask.NoteLoaded();
                 SyncSelectorToTask();
                 status.Text = pageTask.StatusText + " 已载入第 " + pageTask.CurrentPage + " 页。请在主界面手动开始。不会自动回零、定位或发送。";
@@ -1137,6 +1311,7 @@ namespace GrblPlotter.AutoWriter
                 }
                 ApplyPenPreview();
                 loadBoundPage(program);
+                PublishSheetOverlay();
                 pageTask.NoteLoaded();
                 SyncSelectorToTask();
                 status.Text = pageTask.StatusText + " 已载入。请在主界面手动开始。不会自动回零或发送。";

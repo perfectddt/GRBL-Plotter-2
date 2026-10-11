@@ -576,6 +576,7 @@ namespace GrblPlotter
                     MainTimer.Start();
 
                     isStreaming = true;
+                    penOnPaperSet = false;
                     isStreamingPause = false;
                     isStreamingCheck = false;
                     isStreamingOk = true;

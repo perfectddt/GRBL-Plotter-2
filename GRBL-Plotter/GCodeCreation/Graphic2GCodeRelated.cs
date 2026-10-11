@@ -1,4 +1,4 @@
-﻿/*  GRBL-Plotter. Another GCode sender for GRBL.
+/*  GRBL-Plotter. Another GCode sender for GRBL.
     This file is part of the GRBL-Plotter application.
    
     Copyright (C) 2015-2026 Sven Hasemann contact: svenhb@web.de
@@ -876,6 +876,7 @@ namespace GrblPlotter
             ModificationAux.Value2Command = "";
 
             MyControl.OverideGcodeSetup();
+            GrblPlotter.AutoWriter.Services.PenControlSync.ApplyToGeneratedCode();
 
             if ((Control.InsertSubroutineEnable && ModificationSegmentation.Enable) || Control.ToolChangeAddCommand || Control.ToolChangePerform ||
                 (Properties.Settings.Default.importSVGCircleToDot && (Properties.Settings.Default.importCircleToDotScriptCount > 0)))
@@ -1896,6 +1897,7 @@ namespace GrblPlotter
             OptionPWM.Down = dtp.FinalS;
             Spindle.Speed = dtp.FinalS;
             Spindle.SpindleCmd = dtp.UseM3 ? "3" : "4";
+            GrblPlotter.AutoWriter.Services.PenControlSync.ApplyToGeneratedCode();
         }
 
         public static void AddToHeader(string cmt, bool insideTag = true)

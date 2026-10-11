@@ -293,44 +293,44 @@ Die Zip-Datei enthält die ClickOnce Setupdatei. Falls keine Installation gewün
 
 ### Screenshots
 Main GUI
-![GRBL-Plotter GUI](doc/GRBLPlotter_GUI.png?raw=true "Main GUI") 
+![GRBL-Plotter GUI](doc/images/GRBLPlotter_GUI.png?raw=true "Main GUI") 
 
 Separate serial COM window(s) - one for the CNC, one for the tool changer (or 4th axis)  
-![GRBL-Plotter COM interface](doc/GRBLPlotter_COM2.png?raw=true "Serial connection") ![2nd GRBL control](doc/GRBLPlotter_Control_COM2.png?raw=true "Serial connection") 
+![GRBL-Plotter COM interface](doc/images/GRBLPlotter_COM2.png?raw=true "Serial connection") ![2nd GRBL control](doc/images/GRBLPlotter_Control_COM2.png?raw=true "Serial connection") 
 
 Setup Import / GCode Konvertierung  
-![GRBL-Plotter Setup1.1](doc/GRBLPlotter_Setup1_1_de.png?raw=true "Setup1.1") 
+![GRBL-Plotter Setup1.1](doc/images/GRBLPlotter_Setup1_1_de.png?raw=true "Setup1.1") 
 Setup Import / GCode Konvertierung  
-![GRBL-Plotter Setup1.2](doc/GRBLPlotter_Setup1_2_de.png?raw=true "Setup1.2") 
+![GRBL-Plotter Setup1.2](doc/images/GRBLPlotter_Setup1_2_de.png?raw=true "Setup1.2") 
 Setup Import / GCode Konvertierung  
-![GRBL-Plotter Setup1.3](doc/GRBLPlotter_Setup1_3_de.png?raw=true "Setup1.3") 
+![GRBL-Plotter Setup1.3](doc/images/GRBLPlotter_Setup1_3_de.png?raw=true "Setup1.3") 
   
 Setup Werkzeugwechsel  
-![GRBL-Plotter Setup2](doc/GRBLPlotter_Setup2_de.png?raw=true "Setup2") 
+![GRBL-Plotter Setup2](doc/images/GRBLPlotter_Setup2_de.png?raw=true "Setup2") 
   
 Setup Konfiguration 
-![GRBL-Plotter Setup3](doc/GRBLPlotter_Setup3_de.png?raw=true "Setup3") 
+![GRBL-Plotter Setup3](doc/images/GRBLPlotter_Setup3_de.png?raw=true "Setup3") 
   
 Setup benutzerdefinierte Befehle  
-![GRBL-Plotter Setup4](doc/GRBLPlotter_Setup4_de.png?raw=true "Setup4") 
+![GRBL-Plotter Setup4](doc/images/GRBLPlotter_Setup4_de.png?raw=true "Setup4") 
   
 Setup GamePad  
-![GRBL-Plotter Setup5](doc/GRBLPlotter_Setup5_de.png?raw=true "Setup5") 
+![GRBL-Plotter Setup5](doc/images/GRBLPlotter_Setup5_de.png?raw=true "Setup5") 
   
 Setup virtual Joystick and colors  
-![GRBL-Plotter Setup6](doc/GRBLPlotter_Setup6_de.png?raw=true "Setup6") 
+![GRBL-Plotter Setup6](doc/images/GRBLPlotter_Setup6_de.png?raw=true "Setup6") 
   
 Formenerkennung für Passmarken       
-![GRBL-Plotter Setup7](doc/GRBLPlotter_Setup7_de.png?raw=true "Setup7") 
+![GRBL-Plotter Setup7](doc/images/GRBLPlotter_Setup7_de.png?raw=true "Setup7") 
     
 Text Import  
-![GRBL-Plotter Text](doc/GRBLPlotter_Text.png?raw=true "Text conversion") 
+![GRBL-Plotter Text](doc/images/GRBLPlotter_Text.png?raw=true "Text conversion") 
 
 Picture Import  
-![GRBL-Plotter Image](doc/GRBLPlotter_Image.png?raw=true "Image import") 
+![GRBL-Plotter Image](doc/images/GRBLPlotter_Image.png?raw=true "Image import") 
 
 Different scaling options  
-![GRBL-Plotter Scaling](doc/GRBLPlotter_scaling.png?raw=true "GCode scaling") 
+![GRBL-Plotter Scaling](doc/images/GRBLPlotter_scaling.png?raw=true "GCode scaling") 
 
 Feed rate overrid for Version 0.9 and 1.1  
-![GRBL-Plotter Override](doc/GRBLPlotter_override.png?raw=true "GCode override") ![GRBL-Plotter Override](doc/GRBLPlotter_override2.png?raw=true "GCode override")
+![GRBL-Plotter Override](doc/images/GRBLPlotter_override.png?raw=true "GCode override") ![GRBL-Plotter Override](doc/images/GRBLPlotter_override2.png?raw=true "GCode override")
