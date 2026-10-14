@@ -36,6 +36,38 @@ namespace GrblPlotter.UserControls
         private int controlHeightUnfold = 142;
         private int setHeight = 142;
         private int neededWidth = 120;
+        private bool modernCentered;
+        private bool centering;
+
+        internal void EnableCenteredLayout()
+        {
+            modernCentered = true;
+            PerformLayout();
+        }
+
+        protected override void OnLayout(LayoutEventArgs e)
+        {
+            base.OnLayout(e);
+            if (!modernCentered || centering || GbJogControl == null) return;
+            centering = true;
+            try
+            {
+                Control[] controls = { userControlJogControlXY, userControlJogControludZ,
+                    userControlJogControludA, userControlJogControludB, userControlJogControludC };
+                int count = Math.Max(1, Math.Min(controls.Length, axisCount - 1));
+                int gap = (int)(10 * DpiScaling), total = (count - 1) * gap;
+                for (int i = 0; i < count; i++) total += controls[i].Width;
+                int left = Math.Max(gap, (GbJogControl.ClientSize.Width - total) / 2);
+                int top = Math.Max((int)(20 * DpiScaling),
+                    (GbJogControl.ClientSize.Height - userControlJogControlXY.Height + (int)(16 * DpiScaling)) / 2);
+                for (int i = 0; i < count; i++)
+                {
+                    controls[i].Location = new Point(left, top);
+                    left += controls[i].Width + gap;
+                }
+            }
+            finally { centering = false; }
+        }
         private int axisCount = 3;
         MyControl m = new MyControl();
 
@@ -267,6 +299,7 @@ namespace GrblPlotter.UserControls
             userControlJogControludB.SetApperance(useClassic);
             userControlJogControludC.SetApperance(useClassic);
             SetDistFeed();
+            if (modernCentered) PerformLayout();
             Invalidate();
             OnRaiseGuiControlEvent(new UserControlGuiControlEventArgs(GuiControl.guiUpdate));
         }

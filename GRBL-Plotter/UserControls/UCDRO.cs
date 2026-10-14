@@ -36,6 +36,93 @@ namespace GrblPlotter.UserControls
         private GrblPoint MCO = new GrblPoint();
         private int widthOriginal = 230;
         private bool shrinkENable = true;
+        private bool modernLayout;
+        private bool arrangingModern;
+        private int modernAxisCount = 3;
+        private Label modernWorkHeader, modernMachineHeader;
+
+        internal void EnableModernLayout()
+        {
+            modernLayout = true;
+            modernWorkHeader = new Label { Text = "工作坐标", Font = AutoWriter.Ui.UiTheme.SafeFont(8.5f),
+                TextAlign = ContentAlignment.MiddleRight };
+            modernMachineHeader = new Label { Text = "机器坐标", Font = AutoWriter.Ui.UiTheme.SafeFont(8.5f),
+                TextAlign = ContentAlignment.MiddleRight };
+            GbDRO.Controls.Add(modernWorkHeader);
+            GbDRO.Controls.Add(modernMachineHeader);
+            foreach (Label label in new[] { Lbl_wx, Lbl_wy, Lbl_wz, Lbl_wa, Lbl_wb, Lbl_wc,
+                Lbl_mx, Lbl_my, Lbl_mz, Lbl_ma, Lbl_mb, Lbl_mc })
+            {
+                label.AutoSize = false;
+                label.TextAlign = ContentAlignment.MiddleRight;
+                label.Font = new Font("Consolas", 10f);
+                label.TextChanged += (sender, args) => PerformLayout();
+            }
+            BtnZeroXY.Text = "XY归零";
+            BtnZeroXYZ.Text = "XYZ归零";
+            BtnHome.Text = "回机械原点";
+            BtnSetup.Image = null;
+            BtnSetup.BackgroundImage = null;
+            BtnHelp.Image = null;
+            BtnHelp.BackgroundImage = null;
+            PerformLayout();
+        }
+
+        protected override void OnLayout(LayoutEventArgs e)
+        {
+            base.OnLayout(e);
+            if (!modernLayout || arrangingModern || GbDRO == null) return;
+            arrangingModern = true;
+            try
+            {
+                int gap = (int)(6 * DpiScaling), row = (int)(30 * DpiScaling);
+                int width = Math.Max(200, ClientSize.Width - 2 * gap);
+                int axisWidth = (int)(20 * DpiScaling), buttonWidth = (int)(62 * DpiScaling);
+                int valueWidth = (width - axisWidth - buttonWidth - 3 * gap) / 2;
+                GbDRO.Text = "";
+                GbDRO.SetBounds(0, 0, ClientSize.Width, (modernAxisCount + 4) * row + gap);
+                modernWorkHeader.SetBounds(gap + axisWidth, gap, valueWidth, row);
+                modernMachineHeader.SetBounds(2 * gap + axisWidth + valueWidth, gap, valueWidth, row);
+                lblCurrentG.SetBounds(width - buttonWidth, gap, buttonWidth, row);
+                var axes = new[] { LblX, LblY, LblZ, LblA, LblB, LblC };
+                var work = new[] { Lbl_wx, Lbl_wy, Lbl_wz, Lbl_wa, Lbl_wb, Lbl_wc };
+                var machine = new[] { Lbl_mx, Lbl_my, Lbl_mz, Lbl_ma, Lbl_mb, Lbl_mc };
+                var zero = new[] { BtnZeroX, BtnZeroY, BtnZeroZ, BtnZeroA, BtnZeroB, BtnZeroC };
+                for (int i = 0; i < axes.Length; i++)
+                {
+                    axes[i].Visible = work[i].Visible = machine[i].Visible = zero[i].Visible = i < modernAxisCount;
+                    int top = gap + (i + 1) * row;
+                    axes[i].SetBounds(gap, top, axisWidth, row);
+                    work[i].SetBounds(gap + axisWidth, top, valueWidth, row);
+                    machine[i].SetBounds(2 * gap + axisWidth + valueWidth, top, valueWidth, row);
+                    foreach (Label value in new[] { work[i], machine[i] })
+                    {
+                        float size = 10f;
+                        using (var font = new Font("Consolas", size))
+                            if (TextRenderer.MeasureText(value.Text, font).Width > valueWidth)
+                                size = Math.Max(7f, 10f * valueWidth / TextRenderer.MeasureText(value.Text, font).Width);
+                        if (Math.Abs(value.Font.Size - size) > 0.1f) value.Font = new Font("Consolas", size);
+                        toolTip1.SetToolTip(value, value.Text);
+                    }
+                    zero[i].Text = axes[i].Text + "归零";
+                    zero[i].AutoSize = false;
+                    zero[i].AutoEllipsis = false;
+                    zero[i].SetBounds(width - buttonWidth, top + 2, buttonWidth, row - 4);
+                }
+                int bottom = gap + (modernAxisCount + 1) * row;
+                int half = (width - gap) / 2;
+                BtnZeroXY.SetBounds(gap, bottom, half, row - 4);
+                BtnZeroXYZ.SetBounds(2 * gap + half, bottom, half, row - 4);
+                BtnHome.SetBounds(gap, bottom + row, width, row - 4);
+                BtnSetup.Visible = BtnHelp.Visible = true;
+                BtnSetup.Text = "设置";
+                BtnHelp.Text = "帮助";
+                BtnSetup.SetBounds(gap, bottom + 2 * row, half, row - 4);
+                BtnHelp.SetBounds(2 * gap + half, bottom + 2 * row, half, row - 4);
+                Height = GbDRO.Bottom + gap;
+            }
+            finally { arrangingModern = false; }
+        }
 
         private static readonly NLog.Logger Logger = NLog.LogManager.GetCurrentClassLogger();
 
@@ -164,6 +251,7 @@ namespace GrblPlotter.UserControls
         }
         internal void SetAxisCount(int val, CommandProtocol cp)
         {
+            if (modernLayout) { modernAxisCount = Math.Max(3, Math.Min(6, val)); PerformLayout(); return; }
             int width1 = 230;
             if (val < 4)
             {
@@ -315,6 +403,7 @@ namespace GrblPlotter.UserControls
 
         private void SetWidth(bool small)
         {
+            if (modernLayout) { PerformLayout(); return; }
             if (!small)
             {
                 this.Width = widthOriginal;

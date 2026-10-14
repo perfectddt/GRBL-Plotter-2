@@ -18,6 +18,7 @@ namespace GrblPlotter.AutoWriter.Services
         [DataMember(IsRequired = true)] public Dictionary<string, bool> Checks = new Dictionary<string, bool>();
         [DataMember(IsRequired = true)] public string FontPath = "";
         [DataMember(IsRequired = true)] public int TabIndex;
+        [DataMember(IsRequired = false)] public string TabName;
         public void Validate()
         {
             if (Version != 1 || Profile == null || Text == null || Checks == null || FontPath == null)

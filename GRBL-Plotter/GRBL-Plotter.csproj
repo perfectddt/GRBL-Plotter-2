@@ -484,6 +484,8 @@
     <Compile Include="AutoWriter\Services\CalibrationProgramService.cs" />
     <Compile Include="AutoWriter\MainFormInspection.cs" />
     <Compile Include="AutoWriter\MainFormWriting.cs" />
+    <Compile Include="AutoWriter\Ui\UiTheme.cs" />
+    <Compile Include="AutoWriter\Ui\ModernShell.cs" />
     <Compile Include="AutoWriter\InspectionPolicy.cs" />
     <Compile Include="AutoWriter\MachineSetupForm.cs" />
     <Compile Include="AutoWriter\RegionCanvas.cs" />

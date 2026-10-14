@@ -102,6 +102,7 @@ namespace GrblPlotter
             Thread.CurrentThread.CurrentCulture = ci;
             Thread.CurrentThread.CurrentUICulture = ci;
             InitializeComponent();
+            try { AutoWriter.Ui.UiTheme.ApplyDialogSkin(this, false); } catch { /* 2026-10-12 cosmetic skin must never break setup */ }
         }
 
         public void SetLastLoadedFile(string text)

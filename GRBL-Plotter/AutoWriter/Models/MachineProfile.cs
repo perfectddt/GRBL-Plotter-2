@@ -172,6 +172,18 @@ namespace GrblPlotter.AutoWriter.Models
             MachineProfile.OptionalText(WorkOrigin, "axisMapping.workOrigin", 64);
         }
 
+        /// <summary>Friendly summary for the PropertyGrid value column.</summary>
+        public override string ToString()
+        {
+            string axis = string.Format("{0}→{1}  {2}→{3}  {4}→{5}",
+                XAxis ?? "纸面X", XAxis ?? "X", YAxis ?? "纸面Y", YAxis ?? "Y", "笔控", ZAxis ?? "Z");
+            string dirs = string.Format("方向 X{0} Y{1} Z{2}",
+                XDirection.HasValue ? (XDirection.Value > 0 ? "+" : "−") : "?",
+                YDirection.HasValue ? (YDirection.Value > 0 ? "+" : "−") : "?",
+                ZDirection.HasValue ? (ZDirection.Value > 0 ? "+" : "−") : "?");
+            return string.Format("{0} · {1}{2}", axis, dirs, string.IsNullOrEmpty(WorkOrigin) ? "" : " · " + WorkOrigin);
+        }
+
         private static void ValidateDirection(int? direction, string name)
         {
             if (direction.HasValue && direction.Value != -1 && direction.Value != 1)
@@ -206,6 +218,14 @@ namespace GrblPlotter.AutoWriter.Models
             if (min.HasValue && max.Value <= min.Value)
                 throw new MachineProfileValidationException("usableBoundsWorkMm " + axis + " max must be greater than min.");
         }
+
+        /// <summary>Friendly summary for the PropertyGrid value column.</summary>
+        public override string ToString()
+        {
+            string range(double? min, double? max)
+            { return min.HasValue && max.HasValue ? string.Format("{0}–{1}", min.Value, max.Value) : "未设置"; }
+            return string.Format("X {0} · Y {1} · Z {2} (mm)", range(MinX, MaxX), range(MinY, MaxY), range(MinZ, MaxZ));
+        }
     }
 
     [DataContract]
@@ -221,6 +241,15 @@ namespace GrblPlotter.AutoWriter.Models
             ValidateSpeed(DrawingMmPerMin, "speeds.drawingMmPerMin");
             ValidateSpeed(TravelMmPerMin, "speeds.travelMmPerMin");
             ValidateSpeed(ZMmPerMin, "speeds.zMmPerMin");
+        }
+
+        /// <summary>Friendly summary for the PropertyGrid value column.</summary>
+        public override string ToString()
+        {
+            return string.Format("绘图 F{0} · 空移 F{1} · Z F{2} (mm/min)",
+                DrawingMmPerMin.HasValue ? DrawingMmPerMin.Value.ToString() : "?",
+                TravelMmPerMin.HasValue ? TravelMmPerMin.Value.ToString() : "?",
+                ZMmPerMin.HasValue ? ZMmPerMin.Value.ToString() : "?");
         }
 
         private static void ValidateSpeed(double? value, string name)
@@ -242,6 +271,14 @@ namespace GrblPlotter.AutoWriter.Models
         {
             ValidateDelay(PenUpMs, "delays.penUpMs");
             ValidateDelay(PenDownMs, "delays.penDownMs");
+        }
+
+        /// <summary>Friendly summary for the PropertyGrid value column.</summary>
+        public override string ToString()
+        {
+            return string.Format("抬笔 {0} ms · 落笔 {1} ms",
+                PenUpMs.HasValue ? PenUpMs.Value.ToString() : "?",
+                PenDownMs.HasValue ? PenDownMs.Value.ToString() : "?");
         }
 
         private static void ValidateDelay(int? value, string name)
@@ -266,6 +303,20 @@ namespace GrblPlotter.AutoWriter.Models
         internal void Validate()
         {
             // Nullable flags intentionally have no defaults: null means unverified.
+        }
+
+        /// <summary>Friendly summary for the PropertyGrid value column.</summary>
+        public override string ToString()
+        {
+            int known = 0;
+            if (CanHome.HasValue) known++;
+            if (CanReset.HasValue) known++;
+            if (CanPause.HasValue) known++;
+            if (CanCancel.HasValue) known++;
+            if (CanVerifyPositionAfterReset.HasValue) known++;
+            if (HasReliablePositionFeedback.HasValue) known++;
+            if (RequiresContinuousPenMotion.HasValue) known++;
+            return string.Format("已确认 {0}/7 项（展开逐项查看）", known);
         }
     }
 

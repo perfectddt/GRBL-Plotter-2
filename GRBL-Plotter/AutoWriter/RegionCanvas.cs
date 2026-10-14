@@ -358,6 +358,7 @@ namespace GrblPlotter.AutoWriter
                 catch (Exception error) { MessageBox.Show(this, error.Message, "区域参数"); }
             };
             Controls.Add(text); Controls.Add(grid); Controls.Add(buttons);
+            Ui.UiTheme.ApplyDialogSkin(this, false);
         }
         private double N(string key) { return (double)numbers[key].Value; }
     }

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Globalization;
@@ -8,6 +8,7 @@ using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using GrblPlotter.AutoWriter.Models;
 using GrblPlotter.AutoWriter.Services;
+using GrblPlotter.AutoWriter.Ui;
 
 namespace GrblPlotter.AutoWriter
 {
@@ -122,90 +123,89 @@ namespace GrblPlotter.AutoWriter
             Size = new Size(840, 670);
             MinimumSize = new Size(700, 560);
             StartPosition = FormStartPosition.CenterParent;
+            SuspendLayout();
             var tabs = new TabControl { Dock = DockStyle.Fill };
+            tabs.SuspendLayout();
             setupTabs = tabs;
             var machineTab = new TabPage("机器配置");
-            var calibrationTab = new TabPage("步进参数计算");
+            var calibrationTab = new TabPage("步进计算与校准");
             tabs.TabPages.AddRange(new[] { machineTab, calibrationTab });
-            var programTab = new TabPage("校准程序预览");
-            tabs.TabPages.Add(programTab);
-            var programText = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = false };
+            var programText = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true,
+                BackColor = UiTheme.Card, ForeColor = UiTheme.Text, Font = new Font("Consolas", 9f),
+                ScrollBars = ScrollBars.Both, WordWrap = false };
             programPreview = programText;
             properties.PropertyValueChanged += (sender, args) => { programPreview.Clear(); InvalidateWriting(); RefreshApplyReportQuiet(); };
-            var programButtons = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 76, AutoSize = true };
-            var startX = new NumericUpDown { DecimalPlaces = 3, Minimum = -100000, Maximum = 100000, Width = 90 };
-            var startY = new NumericUpDown { DecimalPlaces = 3, Minimum = -100000, Maximum = 100000, Width = 90 };
-            programButtons.Controls.Add(new Label { Text = "起点/中心 X、Y（工作坐标 mm）", AutoSize = true });
-            programButtons.Controls.Add(startX);
-            programButtons.Controls.Add(startY);
-            Button(programButtons, "10mm短线", () => Execute(() => programText.Text = CalibrationProgramService.GenerateShortLine(profile, (double)startX.Value, (double)startY.Value, 10)));
-            Button(programButtons, "十字（臂长5mm）", () => Execute(() => programText.Text = CalibrationProgramService.GenerateCross(profile, (double)startX.Value, (double)startY.Value, 5)));
-            Button(programButtons, "10mm方框", () => Execute(() => programText.Text = CalibrationProgramService.GenerateSquare10Mm(profile, (double)startX.Value, (double)startY.Value)));
-            Button(programButtons, "导出程序", () => Execute(() =>
+            var programButtons = new UiGroup("校准程序");
+            var startX = new NumericUpDown { DecimalPlaces = 3, Minimum = -100000, Maximum = 100000, Width = 90, Margin = new Padding(2, 6, 0, 0) };
+            var startY = new NumericUpDown { DecimalPlaces = 3, Minimum = -100000, Maximum = 100000, Width = 90, Margin = new Padding(2, 6, 0, 0) };
+            programButtons.AddLabel("起点/中心 X、Y（工作坐标 mm）");
+            programButtons.NewRow();
+            programButtons.Add(startX);
+            programButtons.Add(startY);
+            programButtons.Row.EqualColumns = 2;
+            programButtons.NewRow();
+            programButtons.AddButton("10mm短线", () => Execute(() => programText.Text = CalibrationProgramService.GenerateShortLine(profile, (double)startX.Value, (double)startY.Value, 10)));
+            programButtons.AddButton("十字（臂长5mm）", () => Execute(() => programText.Text = CalibrationProgramService.GenerateCross(profile, (double)startX.Value, (double)startY.Value, 5)));
+            programButtons.NewRow();
+            programButtons.AddButton("10mm方框", () => Execute(() => programText.Text = CalibrationProgramService.GenerateSquare10Mm(profile, (double)startX.Value, (double)startY.Value)));
+            programButtons.AddButton("导出程序", () => Execute(() =>
             {
                 if (string.IsNullOrWhiteSpace(programText.Text)) throw new InvalidOperationException("请先生成程序。");
                 using (var dialog = new SaveFileDialog { Filter = "G-code (*.nc)|*.nc", FileName = "calibration.nc" })
-                    if (dialog.ShowDialog(this) == DialogResult.OK)
+                    if (dialog.ShowDialog(DialogOwner) == DialogResult.OK)
                         File.WriteAllText(dialog.FileName, programText.Text);
             }));
-            programTab.Controls.Add(programText);
-            programTab.Controls.Add(programButtons);
 
-            var applyTab = new TabPage("应用与写字预览");
+            var applyTab = new TabPage("应用与写字预览") { BackColor = UiTheme.Background };
             tabs.TabPages.Add(applyTab);
-            var applyToolbar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 72, AutoSize = true, WrapContents = true };
-            Button(applyToolbar, "刷新应用报告", RefreshApplyReport);
-            applyToolbar.Controls.Add(new Label { Text = "显式覆盖（留空用配置值）：Z抬", AutoSize = true });
-            AddOverride(applyToolbar, "penup");
-            applyToolbar.Controls.Add(new Label { Text = "Z落", AutoSize = true });
-            AddOverride(applyToolbar, "pendown");
-            applyToolbar.Controls.Add(new Label { Text = "Z速", AutoSize = true });
-            AddOverride(applyToolbar, "zfeed");
-            applyToolbar.Controls.Add(new Label { Text = "绘图", AutoSize = true });
-            AddOverride(applyToolbar, "draw");
-            applyToolbar.Controls.Add(new Label { Text = "空移", AutoSize = true });
-            AddOverride(applyToolbar, "travel");
-            var applyButtons = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 265, AutoSize = false, AutoScroll = true, WrapContents = true };
-            Button(applyButtons, "生成写字预览", GenerateWritingPreview);
-            Button(applyButtons, "检查连续排队", CheckContinuousQueue);
-            Button(applyButtons, "导出写字程序", ExportWritingProgram);
-            Button(applyButtons, "生成并载入主界面预览", LoadWritingIntoMainPreview);
-            parkEnabled = new CheckBox { Text = "写完回原点（抬笔）至 X", Checked = true, AutoSize = true };
-            parkX = new TextBox { Text = "0", Width = 46 };
-            parkY = new TextBox { Text = "0", Width = 46 };
-            applyButtons.Controls.Add(parkEnabled);
-            applyButtons.Controls.Add(parkX);
-            applyButtons.Controls.Add(new Label { Text = "Y", AutoSize = true });
-            applyButtons.Controls.Add(parkY);
-            startAtOrigin = new CheckBox { Text = "起笔点=原点（第一个落笔点 X0 Y0）", Checked = false, AutoSize = true };
-            applyButtons.Controls.Add(startAtOrigin);
-            // Multi-character row: text + letter/line spacing feed TextLayoutService; an empty text
-            // keeps the historical single-工 sample so existing checks and habits still work.
-            applyButtons.Controls.Add(new Label { Text = "字体", AutoSize = true });
-            fontSelector = new ScrollableFontComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 250 };
-            PopulateFontSelector();
-            fontSelector.SelectedIndexChanged += (sender, args) => { selectedFontPack = null; InvalidateWriting(); };
-            applyButtons.Controls.Add(fontSelector);
-            Button(applyButtons, "导入UTF-8文本", ImportWritingText);
-            Button(applyButtons, "缺字报告", ShowCoverage);
-            Button(applyButtons, "补充缺字字库", ChooseSupplement);
-            Button(applyButtons, "导入图片或SVG", ImportGraphic);
-            applyButtons.Controls.Add(new Label { Text = "变化mm", AutoSize = true });
-            variationAmount = new TextBox { Text = "0", Width = 40 };
-            variationSeed = new TextBox { Text = "1", Width = 50 };
-            applyButtons.Controls.Add(variationAmount);
-            applyButtons.Controls.Add(new Label { Text = "种子", AutoSize = true });
-            applyButtons.Controls.Add(variationSeed);
-            applyButtons.Controls.Add(new Label { Text = "表格行", AutoSize = true });
-            gridRowsInput = new TextBox { Text = "0", Width = 36 };
-            gridColumnsInput = new TextBox { Text = "0", Width = 36 };
-            drawGridLines = new CheckBox { Text = "格线写入笔迹", AutoSize = true };
-            applyButtons.Controls.Add(gridRowsInput);
-            applyButtons.Controls.Add(new Label { Text = "列", AutoSize = true });
-            applyButtons.Controls.Add(gridColumnsInput);
-            applyButtons.Controls.Add(drawGridLines);
-            applyButtons.Controls.Add(new Label { Text = "文本（内置可用：" + BuiltinGlyphLibrary.AvailableSymbols + "）", AutoSize = true });
-            writingInputText = new TextBox { Text = "", Width = 320, Height = 72, Multiline = true, AcceptsReturn = true, WordWrap = false, ScrollBars = ScrollBars.Both };
+            /* 2026-10-12 layout pass: this tab used to be two flat, wrapping bands holding ~20
+             * buttons with the parameter labels scattered in between. Everything now sits in
+             * titled cards ordered the way an operator walks through a job:
+             *   内容与字体 -> 页面与分页 -> 笔迹变化与表格 -> 速度覆盖 -> 生成与项目
+             * Every control kept its handler; nothing is hidden behind a drop-down. */
+            // Same shape as 区域排版: a scrolling column of cards on the left, the previews on
+            // the right, so the vertical space of the embedded dialog is not wasted on scrolling.
+            var applySplitRoot = new SplitContainer
+            {
+                Dock = DockStyle.Fill,
+                Orientation = Orientation.Vertical,
+                FixedPanel = FixedPanel.Panel1,
+                BackColor = UiTheme.CardBorder,   // the splitter strip is painted with this: keep it visible so the column can be dragged
+                SplitterWidth = 6
+            };
+            applySplitRoot.Panel1.BackColor = UiTheme.Background;
+            applySplitRoot.Panel2.BackColor = UiTheme.Background;
+            var applyHost = new Panel { Dock = DockStyle.Fill, AutoScroll = true, BackColor = UiTheme.Background };
+            var applyColumn = new Panel
+            {
+                Dock = DockStyle.Top,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                BackColor = UiTheme.Background,
+                Padding = new Padding(8, 6, 8, 6)
+            };
+            applyHost.Controls.Add(applyColumn);
+            applySplitRoot.Panel1.Controls.Add(applyHost);
+            ApplySplitDistanceWhenLaidOut(applySplitRoot, () => 360);
+            var groups = new List<UiGroup>();
+
+            // ---- 1. 内容与字体 ----
+            var groupContent = new UiGroup("内容与字体");
+            groups.Add(groupContent);
+            groupContent.AddLabel("文本");
+            groupContent.NewRow();
+            groupContent.AddButton("导入UTF-8文本", ImportWritingText);
+            groupContent.AddButton("导入图片或SVG", ImportGraphic);
+            writingInputText = new TextBox
+            {
+                Text = "",
+                Multiline = true,
+                AcceptsReturn = true,
+                WordWrap = false,
+                ScrollBars = ScrollBars.Both,
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0)
+            };
             writingInputText.TextChanged += (sender, args) => {
                 string raw = writingInputText.Text;
                 string normalized = WritingEditorText.Normalize(raw);
@@ -217,26 +217,59 @@ namespace GrblPlotter.AutoWriter
                 int newEnd = WritingEditorText.Normalize(raw.Substring(0, end)).Length;
                 writingInputText.Select(Math.Min(newStart, normalized.Length), Math.Max(0, Math.Min(newEnd, normalized.Length) - Math.Min(newStart, normalized.Length)));
             };
-            applyButtons.Controls.Add(writingInputText);
-            applyButtons.Controls.Add(new Label { Text = "字距mm", AutoSize = true });
-            letterSpacingInput = new TextBox { Text = "2", Width = 40 };
-            applyButtons.Controls.Add(letterSpacingInput);
-            applyButtons.Controls.Add(new Label { Text = "行间空隙mm", AutoSize = true });
-            lineSpacingInput = new TextBox { Text = "2", Width = 40 };
-            applyButtons.Controls.Add(lineSpacingInput);
-            applyButtons.Controls.Add(new Label { Text = "字号mm(字身高)", AutoSize = true });
-            fontSizeInput = new TextBox { Text = "10", Width = 40 };
-            applyButtons.Controls.Add(fontSizeInput);
-            Button(applyButtons, "保存写字项目", SaveWritingProject);
-            Button(applyButtons, "打开写字项目", OpenWritingProject);
-            pageEnabled = new CheckBox { Text = "自动分页（纸张左上角=工作原点）", Checked = true, AutoSize = true };
-            autoWrap = new CheckBox { Text = "自动换行", Checked = true, AutoSize = true };
-            applyButtons.Controls.Add(pageEnabled); applyButtons.Controls.Add(autoWrap);
-            Button(applyButtons, "上一页", () => { if (pageSelector.Value > 1) pageSelector.Value--; });
-            pageSelector = new NumericUpDown { Minimum = 1, Maximum = 100000, Value = 1, Width = 70 };
-            pageTotal = new Label { Text = " / 未生成", AutoSize = true };
-            applyButtons.Controls.Add(pageSelector); applyButtons.Controls.Add(pageTotal);
-            Button(applyButtons, "下一页", () => { if (writingPages != null && pageSelector.Value < writingPages.Count) pageSelector.Value++; });
+            groupContent.AddWide(writingInputText, 58);
+            groupContent.NewRow();
+            groupContent.AddLabel("字体");
+            groupContent.NewRow();
+            fontSelector = new ScrollableFontComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Width = 244,
+                Height = UiTheme.ControlHeight,
+                Margin = new Padding(0)
+            };
+            PopulateFontSelector();
+            fontSelector.SelectedIndexChanged += (sender, args) => { selectedFontPack = null; InvalidateWriting(); };
+            fontSelector.Dock = DockStyle.Fill;
+            groupContent.Row.Controls.Add(fontSelector);
+            groupContent.NewRow();
+            fontSizeInput = groupContent.AddField("字号mm", "10", 42);
+            letterSpacingInput = groupContent.AddField("字距mm", "2", 42);
+            groupContent.NewRow();
+            lineSpacingInput = groupContent.AddField("行距mm", "2", 42);
+            groupContent.NewRow();
+            groupContent.AddButton("缺字报告", ShowCoverage);
+            groupContent.AddButton("补充缺字字库", ChooseSupplement);
+            groupContent.Note("内置可用：" + BuiltinGlyphLibrary.AvailableSymbols + "；空文本 = 示例笔画。");
+
+            // ---- 2. 页面与分页 ----
+            var groupPage = new UiGroup("页面与分页");
+            groups.Add(groupPage);
+            pageFields.Add("宽", PageField(groupPage, "宽mm", "210", 46));
+            pageFields.Add("高", PageField(groupPage, "高mm", "297", 46));
+            groupPage.NewRow();
+            pageFields.Add("左", PageField(groupPage, "左", "10", 40));
+            pageFields.Add("右", PageField(groupPage, "右", "10", 40));
+            groupPage.NewRow();
+            pageFields.Add("上", PageField(groupPage, "上", "10", 40));
+            pageFields.Add("下", PageField(groupPage, "下", "10", 40));
+            groupPage.NewRow();
+            pageEnabled = groupPage.AddCheck("自动分页（纸张左上角=工作原点）", true);
+            groupPage.NewRow();
+            autoWrap = groupPage.AddCheck("自动换行", true);
+            groupPage.NewRow();
+            startAtOrigin = groupPage.AddCheck("起笔点=原点（第一个落笔点 X0 Y0）", false);
+            groupPage.NewRow();
+            parkEnabled = groupPage.AddCheck("写完回原点（抬笔）", true);
+            groupPage.NewRow();
+            parkX = groupPage.AddField("回位 X", "0", 54);
+            parkY = groupPage.AddField("回位 Y", "0", 54);
+            groupPage.NewRow();
+            groupPage.AddButton("上一页", () => { if (pageSelector.Value > 1) pageSelector.Value--; });
+            pageSelector = groupPage.Add(new NumericUpDown { Minimum = 1, Maximum = 100000, Value = 1, Width = 58, Height = UiTheme.ControlHeight, Margin = new Padding(0) }, 6);
+            pageTotal = groupPage.Add(new Label { Text = " / 未生成", AutoSize = true, ForeColor = UiTheme.SubText, Margin = new Padding(0) }, 2);
+            groupPage.AddButton("下一页", () => { if (writingPages != null && pageSelector.Value < writingPages.Count) pageSelector.Value++; });
+            groupPage.Row.EqualColumns = 4;
             pageSelector.ValueChanged += (sender, args) => {
                 if (updatingPage) return;
                 if (writingText != null) writingText.Clear();
@@ -244,13 +277,47 @@ namespace GrblPlotter.AutoWriter
                 if (regionPageSelector != null) regionPageSelector.Value = pageSelector.Value;
                 status.Text = "页码已切换；请重新生成并载入当前页。换纸后确认相同工作原点，手动开始书写。";
             };
-            foreach (string key in new[] { "宽", "高", "左", "右", "上", "下" })
-            {
-                applyButtons.Controls.Add(new Label { Text = key + "mm", AutoSize = true });
-                var box = new TextBox { Text = key == "宽" ? "210" : key == "高" ? "297" : "10", Width = 45 };
-                pageFields.Add(key, box); applyButtons.Controls.Add(box); box.TextChanged += (sender, args) => InvalidateWriting();
-            }
-            applyButtons.Controls.Add(new Label { Text = "多页请点窗口下方“冻结多页任务”。写完一页并确认空闲后，换纸点“已换纸并确认位置”，再在主界面手动开始。空文本=示例笔画。", AutoSize = true });
+            groupPage.Note("多页请点窗口下方“冻结多页任务”。写完一页并确认空闲后，换纸点“已换纸并确认位置”，再在主界面手动开始。");
+
+            // ---- 3. 笔迹变化与表格 ----
+            var groupVariation = new UiGroup("笔迹变化与表格");
+            groups.Add(groupVariation);
+            variationAmount = groupVariation.AddField("变化mm", "0", 46);
+            variationSeed = groupVariation.AddField("种子", "1", 54);
+            groupVariation.NewRow();
+            gridRowsInput = groupVariation.AddField("表格行", "0", 44);
+            gridColumnsInput = groupVariation.AddField("列", "0", 44);
+            groupVariation.NewRow();
+            drawGridLines = groupVariation.AddCheck("格线写入笔迹", false);
+
+            // ---- 4. 速度覆盖 ----
+            var groupSpeed = new UiGroup("速度覆盖（留空用配置值）");
+            groups.Add(groupSpeed);
+            AddOverride(groupSpeed, "Z抬", "penup");
+            AddOverride(groupSpeed, "Z落", "pendown");
+            groupSpeed.NewRow();
+            AddOverride(groupSpeed, "Z速", "zfeed");
+            AddOverride(groupSpeed, "绘图", "draw");
+            groupSpeed.NewRow();
+            AddOverride(groupSpeed, "空移", "travel");
+
+            // ---- 5. 生成与项目 ----
+            var groupRun = new UiGroup("生成与项目");
+            groups.Add(groupRun);
+            groupRun.AddButton("生成写字预览", GenerateWritingPreview, UiButtonKind.Primary);
+            groupRun.AddButton("生成并载入主界面预览", LoadWritingIntoMainPreview, UiButtonKind.Primary);
+            groupRun.NewRow();
+            groupRun.AddButton("刷新应用报告", RefreshApplyReport);
+            groupRun.AddButton("检查连续排队", CheckContinuousQueue);
+            groupRun.AddButton("导出写字程序", ExportWritingProgram);
+            groupRun.NewRow();
+            groupRun.AddButton("保存写字项目", SaveWritingProject);
+            groupRun.AddButton("打开写字项目", OpenWritingProject);
+
+            // Cards dock from the highest child index downwards, so add them bottom-first.
+            for (int index = groups.Count - 1; index >= 0; index--)
+                applyColumn.Controls.Add(groups[index].Card);
+
             pageEnabled.CheckedChanged += (sender, args) => { UpdatePageMode(); InvalidateWriting(); };
             autoWrap.CheckedChanged += (sender, args) => InvalidateWriting();
             foreach (TextBox box in new[] { writingInputText, letterSpacingInput, lineSpacingInput, fontSizeInput, parkX, parkY, variationAmount, variationSeed, gridRowsInput, gridColumnsInput })
@@ -259,26 +326,33 @@ namespace GrblPlotter.AutoWriter
             parkEnabled.CheckedChanged += (sender, args) => InvalidateWriting();
             startAtOrigin.CheckedChanged += (sender, args) => InvalidateWriting();
             UpdatePageMode();
-            applyText = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, WordWrap = false };
-            writingText = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = false };
+            applyText = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true,
+                BackColor = UiTheme.Card, ForeColor = UiTheme.Text, ScrollBars = ScrollBars.Vertical, WordWrap = false };
+            writingText = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true,
+                BackColor = UiTheme.Card, ForeColor = UiTheme.Text, Font = new Font("Consolas", 9f),
+                ScrollBars = ScrollBars.Both, WordWrap = false };
             var applySplit = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal };
             applySplit.Panel1.Controls.Add(applyText);
+            applySplit.Panel1.Controls.Add(PreviewHeader("应用报告（配置将如何落地）"));
             applySplit.Panel2.Controls.Add(writingText);
-            // SplitterDistance must be set after the control has a real size, and may still be
-            // clamped by the panel minimum sizes; keep it non-fatal so the dialog always opens.
-            Load += (sender, args) => { try { applySplit.SplitterDistance = Math.Max(applySplit.Panel1MinSize, applySplit.Height / 2); } catch (ArgumentOutOfRangeException) { } };
-            applyTab.Controls.Add(applySplit);
-            applyTab.Controls.Add(applyButtons);
-            applyTab.Controls.Add(applyToolbar);
+            applySplit.Panel2.Controls.Add(PreviewHeader("写字程序预览（生成的 G 代码）"));
+            // SplitterDistance must be set after the control has a real size (Form.Load is still
+            // too early - see ApplySplitDistanceWhenLaidOut); keep it non-fatal so the dialog always opens.
+            ApplySplitDistanceWhenLaidOut(applySplit, () => Math.Max(applySplit.Panel1MinSize, applySplit.Height / 2));
+            applySplitRoot.Panel2.Controls.Add(applySplit);
+            applyTab.Controls.Add(applySplitRoot);
 
             BuildRegionTab(tabs, applyTab);
             Controls.Add(tabs);
-            var taskBar = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 36, WrapContents = false, Padding = new Padding(6, 4, 6, 0) };
-            pageTaskStatus = new Label { AutoSize = true, Text = pageTask == null ? "写字任务：未连接主界面" : pageTask.StatusText, Padding = new Padding(0, 6, 8, 0) };
+            var taskBar = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 40, WrapContents = false,
+                Padding = new Padding(10, 5, 6, 0), BackColor = UiTheme.Background };
+            pageTaskStatus = new Label { AutoSize = true, Text = pageTask == null ? "写字任务：未连接主界面" : pageTask.StatusText,
+                Padding = new Padding(0, 6, 8, 0), ForeColor = UiTheme.SubText };
             taskBar.Controls.Add(pageTaskStatus);
-            Button(taskBar, "冻结多页任务", FreezePageTask);
+            UiTheme.AddButton(taskBar, "冻结多页任务", FreezePageTask);
             confirmPaperButton = new Button { Text = "已换纸并确认位置", AutoSize = true, Height = 30, Enabled = false };
             confirmPaperButton.Click += (sender, args) => ConfirmPaperFromSetup();
+            UiTheme.StyleFlatButton(confirmPaperButton, UiButtonKind.Success);
             taskBar.Controls.Add(confirmPaperButton);
             Controls.Add(taskBar);
             Controls.Add(status);
@@ -288,97 +362,242 @@ namespace GrblPlotter.AutoWriter
                 pageTask.Changed += RefreshPageTaskStatus;
                 FormClosed += (sender, args) => pageTask.Changed -= RefreshPageTaskStatus;
             }
-            var toolbar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 42, AutoSize = true };
-            Button(toolbar, "新建（未验证）", NewProfile);
-            Button(toolbar, "打开配置", OpenProfile);
-            Button(toolbar, "保存配置", SaveProfile);
-            machineTab.Controls.Add(properties);
-            machineTab.Controls.Add(toolbar);
-            var note = new Label { Dock = DockStyle.Bottom, Height = 65,
-                Text = "空值表示尚未验证。配置保存不会连接机器或写入固件。\r\n展开 AxisMapping / Speeds / Delays / Capabilities 设置参数。截图数值只能记录为候选。\r\n读取实机：用 --inspect-machine 启动，再手动连接；该模式只允许查询。" };
-            machineTab.Controls.Add(note);
+            machineTab.BackColor = UiTheme.Background;
+            Panel machineColumn;
+            Panel machineDetail = BuildSettingsPage(machineTab, out machineColumn);
+            var toolbar = new UiGroup("机器配置文件");
+            toolbar.AddButton("新建（未验证）", NewProfile);
+            toolbar.AddButton("打开配置", OpenProfile);
+            toolbar.NewRow();
+            toolbar.AddButton("保存配置", SaveProfile, UiButtonKind.Primary);
+            toolbar.Note("空值表示尚未验证。配置保存不会连接机器或写入固件。");
+            var help = new UiGroup("配置说明");
+            help.Note("在右侧展开 AxisMapping / Speeds / Delays / Capabilities 设置参数。截图数值只能记录为候选。");
+            help.Note("读取实机：用 --inspect-machine 启动，再手动连接；该模式只允许查询。");
+            machineColumn.Controls.Add(help.Card);
+            machineColumn.Controls.Add(toolbar.Card);
+            machineDetail.Controls.Add(properties);
+            machineDetail.Controls.Add(PreviewHeader("机器参数"));
 
-            var fields = new TableLayoutPanel { Dock = DockStyle.Fill, AutoScroll = true, ColumnCount = 2, Padding = new Padding(12) };
-            fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 65));
-            fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 35));
-            AddField(fields, "angle", "步距角（度）", "1.8");
-            AddField(fields, "micro", "驱动细分", "1");
-            AddField(fields, "pitch", "同步带节距（mm）", "2");
-            AddField(fields, "teeth", "同步轮齿数", "16");
-            AddField(fields, "lead", "丝杆导程（mm/圈）", "8");
-            AddField(fields, "pulses", "内部每圈脉冲数", "7200");
-            AddField(fields, "numerator", "电子齿轮分子 N（内部 = 外部 × N/D）", "1");
-            AddField(fields, "denominator", "电子齿轮分母 D", "1");
-            AddField(fields, "old", "原步数/mm（实测修正）", "");
-            AddField(fields, "commanded", "指令距离（mm）", "");
-            AddField(fields, "measured", "实测距离（mm）", "");
-            var calculations = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 45 };
-            Button(calculations, "同步带计算", () => Calculate(() => MotionCalibrationService.CalculateBelt(Value("angle"), Value("micro"), Value("pitch"), Value("teeth"))));
-            Button(calculations, "丝杆计算", () => Calculate(() => MotionCalibrationService.CalculateScrew(Value("angle"), Value("micro"), Value("lead"))));
-            Button(calculations, "电子齿轮计算", () => Calculate(() => MotionCalibrationService.CalculateEffective(Value("pulses"), Value("lead"), Value("numerator"), Value("denominator"))));
-            Button(calculations, "实测修正", () => Execute(() => result.Text = "修正步数/mm：" + MotionCalibrationService.CorrectMeasuredStepsPerMm(Value("old"), Value("commanded"), Value("measured")).ToString("G12", CultureInfo.InvariantCulture)));
-            calibrationTab.Controls.Add(fields);
-            calibrationTab.Controls.Add(calculations);
-            calibrationTab.Controls.Add(result);
-            NewProfile();
-            RestoreLastState();
+            Panel calibrationColumn;
+            Panel calibrationDetail = BuildSettingsPage(calibrationTab, out calibrationColumn);
+            var motor = new UiGroup("电机与驱动");
+            AddCalibrationField(motor, "angle", "步距角（度）", "1.8");
+            AddCalibrationField(motor, "micro", "驱动细分", "1");
+            var belt = new UiGroup("同步带与丝杆");
+            AddCalibrationField(belt, "pitch", "同步带节距（mm）", "2");
+            AddCalibrationField(belt, "teeth", "同步轮齿数", "16");
+            AddCalibrationField(belt, "lead", "丝杆导程（mm/圈）", "8");
+            belt.AddButton("同步带计算", () => Calculate(() => MotionCalibrationService.CalculateBelt(Value("angle"), Value("micro"), Value("pitch"), Value("teeth"))));
+            belt.AddButton("丝杆计算", () => Calculate(() => MotionCalibrationService.CalculateScrew(Value("angle"), Value("micro"), Value("lead"))));
+            var gear = new UiGroup("电子齿轮");
+            AddCalibrationField(gear, "pulses", "内部每圈脉冲数", "7200");
+            AddCalibrationField(gear, "numerator", "电子齿轮分子 N", "1");
+            AddCalibrationField(gear, "denominator", "电子齿轮分母 D", "1");
+            gear.Note("内部脉冲 = 外部脉冲 × N / D。");
+            gear.AddButton("电子齿轮计算", () => Calculate(() => MotionCalibrationService.CalculateEffective(Value("pulses"), Value("lead"), Value("numerator"), Value("denominator"))));
+            var measured = new UiGroup("实测修正");
+            AddCalibrationField(measured, "old", "原步数/mm", "");
+            AddCalibrationField(measured, "commanded", "指令距离（mm）", "");
+            AddCalibrationField(measured, "measured", "实测距离（mm）", "");
+            measured.AddButton("实测修正", () => Execute(() => result.Text = "修正步数/mm：" + MotionCalibrationService.CorrectMeasuredStepsPerMm(Value("old"), Value("commanded"), Value("measured")).ToString("G12", CultureInfo.InvariantCulture)));
+            foreach (var group in new[] { programButtons, measured, gear, belt, motor })
+                calibrationColumn.Controls.Add(group.Card);
+            var previews = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal,
+                BackColor = UiTheme.Background };
+            result.Dock = DockStyle.Fill;
+            result.BackColor = UiTheme.Card;
+            result.ForeColor = UiTheme.Text;
+            previews.Panel1.Controls.Add(result);
+            previews.Panel1.Controls.Add(PreviewHeader("计算结果"));
+            previews.Panel2.Controls.Add(programText);
+            previews.Panel2.Controls.Add(PreviewHeader("校准程序预览（G 代码）"));
+            calibrationDetail.Controls.Add(previews);
+            ApplySplitDistanceWhenLaidOut(previews, () => Math.Max(25, previews.Height / 3));
+            NewProfile();            RestoreLastState();
+            tabs.ResumeLayout(false);
+            ResumeLayout(false);
+        }
+
+        private Panel BuildSettingsPage(TabPage tab, out Panel column)
+        {
+            tab.BackColor = UiTheme.Background;
+            var split = new SplitContainer { Dock = DockStyle.Fill, FixedPanel = FixedPanel.Panel1,
+                BackColor = UiTheme.CardBorder,   // the splitter strip is painted with this: keep it visible so the column can be dragged
+                SplitterWidth = 6 };
+            split.Panel1.BackColor = split.Panel2.BackColor = UiTheme.Background;
+            var host = new Panel { Dock = DockStyle.Fill, AutoScroll = true, BackColor = UiTheme.Background };
+            column = new Panel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                BackColor = UiTheme.Background, Padding = new Padding(8, 6, 8, 6) };
+            host.Controls.Add(column);
+            split.Panel1.Controls.Add(host);
+            tab.Controls.Add(split);
+            ApplySplitDistanceWhenLaidOut(split, () => 360);
+            return split.Panel2;
+        }
+
+        /// <summary>
+        /// Apply a SplitterDistance once the SplitContainer has a real size. Form.Load fires before
+        /// the TabControl lays out its pages (probed 2026-10-14: every split is still at its 192x70
+        /// default then), so the previous Load-time assignments threw ArgumentOutOfRangeException and
+        /// were silently swallowed, leaving the left columns at the ~163px default. Retry on Resize
+        /// until the target distance fits, then stop listening.
+        /// </summary>
+        private static void ApplySplitDistanceWhenLaidOut(SplitContainer split, Func<int> distance)
+        {
+            EventHandler apply = null;
+            apply = (sender, args) =>
+            {
+                int span = split.Orientation == Orientation.Vertical ? split.Width : split.Height;
+                if (span <= 220) return;   // still at the design-time default size, not laid out yet
+                int target = distance();
+                if (target < split.Panel1MinSize || target > span - split.Panel2MinSize - split.SplitterWidth) return;
+                split.Resize -= apply;
+                try { split.SplitterDistance = target; } catch (ArgumentOutOfRangeException) { }
+            };
+            split.Resize += apply;
+            apply(null, EventArgs.Empty);
+        }
+
+        private void AddCalibrationField(UiGroup group, string key, string label, string text)
+        {
+            TextBox input = group.AddField(label, text, 80);
+            foreach (Control child in input.Parent.Controls)
+                if (child is Label) child.Width = 144;
+            inputs.Add(key, input);
+            group.Row.EqualColumns = 1;
+            group.NewRow();
+        }
+
+        private static Label PreviewHeader(string text)
+        {
+            Label header = UiTheme.FieldLabel(text);
+            header.Dock = DockStyle.Top;
+            header.BackColor = UiTheme.Background;
+            return header;
         }
 
         private void BuildRegionTab(TabControl tabs, TabPage writingTab)
         {
-            var tab = new TabPage("区域排版");
-            var toolbar = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(4) };
-            regionsEnabled = new CheckBox { Text = "多区域排版", AutoSize = true };
-            toolbar.Controls.Add(regionsEnabled);
-            Button(toolbar, "上一页", () => { if (pageSelector.Value > 1) pageSelector.Value--; });
-            regionPageSelector = new NumericUpDown { Minimum=1, Maximum=100000, Value=pageSelector.Value, Width=70 };
-            regionPageTotal = new Label { Text=" / 未生成", AutoSize=true };
-            toolbar.Controls.Add(regionPageSelector); toolbar.Controls.Add(regionPageTotal);
-            regionPageSelector.ValueChanged += (sender,args) => { if (!updatingPage) pageSelector.Value=regionPageSelector.Value; };
-            Button(toolbar, "下一页", () => { if (writingPages != null && pageSelector.Value < writingPages.Count) pageSelector.Value++; });
-            Button(toolbar, "纸张与字体设置", () => tabs.SelectedTab = writingTab);
-            Button(toolbar, "区域模板", ManageRegionTemplates);
-            Button(toolbar, "生成表格", MakeGrid);
-            Button(toolbar, "编辑选中区域", () => EditRegion(regionCanvas.Selected));
-            Button(toolbar, "复制选中区域", CopySelectedRegion);
-            Button(toolbar, "删除选中区域", () => {
+            /* 2026-10-12 layout pass: the 18 controls of this tab used to sit in one wrapping
+             * band above the canvas. They are now grouped into a scrolling side column in the
+             * order an operator works: 模式与页面 -> 区域编辑 -> 排列顺序 -> 模板 -> 笔起点
+             * -> 显示 -> 生成与项目. Same controls, same handlers - nothing in a drop-down. */
+            var tab = new TabPage("区域排版") { BackColor = UiTheme.Background };
+            var split = new SplitContainer
+            {
+                Dock = DockStyle.Fill,
+                Orientation = Orientation.Vertical,
+                FixedPanel = FixedPanel.Panel1,
+                BackColor = UiTheme.CardBorder,   // the splitter strip is painted with this: keep it visible so the column can be dragged
+                SplitterWidth = 6
+            };
+            split.Panel1.BackColor = UiTheme.Background;
+            split.Panel2.BackColor = UiTheme.Background;
+            var sideHost = new Panel { Dock = DockStyle.Fill, AutoScroll = true, BackColor = UiTheme.Background };
+            var column = new Panel
+            {
+                Dock = DockStyle.Top,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                BackColor = UiTheme.Background,
+                Padding = new Padding(8, 6, 8, 6)
+            };
+            sideHost.Controls.Add(column);
+            split.Panel1.Controls.Add(sideHost);
+            ApplySplitDistanceWhenLaidOut(split, () => 360);
+
+            var groups = new List<UiGroup>();
+
+            // ---- 1. 排版模式与页面 ----
+            var groupMode = new UiGroup("排版模式与页面");
+            groups.Add(groupMode);
+            regionsEnabled = groupMode.AddCheck("多区域排版", false);
+            groupMode.NewRow();
+            var previousRegionPage = groupMode.AddButton("上一页", () => { if (pageSelector.Value > 1) pageSelector.Value--; });
+            previousRegionPage.AutoSize = false;
+            previousRegionPage.Width = 58;
+            regionPageSelector = groupMode.Add(new NumericUpDown
+            { Minimum = 1, Maximum = 100000, Value = pageSelector.Value, Width = 58, Height = UiTheme.ControlHeight, Margin = new Padding(0) }, 6);
+            regionPageTotal = groupMode.Add(new Label
+            { Text = " / 未生成", AutoSize = false, Width = 76, Height = UiTheme.ControlHeight,
+                TextAlign = ContentAlignment.MiddleLeft, ForeColor = UiTheme.SubText, Margin = new Padding(0) }, 2);
+            var nextRegionPage = groupMode.AddButton("下一页", () => { if (writingPages != null && pageSelector.Value < writingPages.Count) pageSelector.Value++; });
+            nextRegionPage.AutoSize = false;
+            nextRegionPage.Width = 58;
+            groupMode.Row.EqualColumns = 4;
+            regionPageSelector.ValueChanged += (sender, args) => { if (!updatingPage) pageSelector.Value = regionPageSelector.Value; };
+            groupMode.NewRow();
+            groupMode.AddButton("纸张与字体设置", () => tabs.SelectedTab = writingTab);
+
+            // ---- 2. 区域编辑 ----
+            var groupEdit = new UiGroup("区域编辑");
+            groups.Add(groupEdit);
+            groupEdit.AddButton("生成表格", MakeGrid);
+            groupEdit.AddButton("编辑选中区域", () => EditRegion(regionCanvas.Selected));
+            groupEdit.NewRow();
+            groupEdit.AddButton("复制选中区域", CopySelectedRegion);
+            groupEdit.AddButton("删除选中区域", () => {
                 int index = regionCanvas.Selected;
                 if (index >= 0 && index < regions.Count) { RememberRegions(); regions.RemoveAt(index); regionCanvas.Selected = Math.Min(index, regions.Count - 1); InvalidateWriting(); }
             });
-            Button(toolbar, "书写顺序提前", () => MoveRegionOrder(-1));
-            Button(toolbar, "书写顺序推后", () => MoveRegionOrder(1));
-            Button(toolbar, "撤销", UndoRegions);
-            Button(toolbar, "重做", RedoRegions);
-            var snap = new CheckBox { Text = "吸附1mm", AutoSize = true };
-            snap.CheckedChanged += (sender, args) => { if (regionCanvas != null) regionCanvas.SnapToGrid = snap.Checked; };
-            toolbar.Controls.Add(snap);
-            var grid = new CheckBox { Text = "网格", AutoSize = true, Checked = true };
-            grid.CheckedChanged += (sender, args) => { if (regionCanvas != null) { regionCanvas.ShowGrid = grid.Checked; regionCanvas.Invalidate(); } };
-            toolbar.Controls.Add(grid);
-            Button(toolbar, "区域笔迹预览", () => Execute(() => {
-                InvalidateWriting();
-                if (!regionsEnabled.Checked) throw new InvalidOperationException("请先勾选多区域单页。");
-                BuildWritingStrokes();
-            }));
-            toolbar.Controls.Add(new Label { Text = "黑色起点 X", AutoSize = true, Margin = new Padding(8, 7, 0, 0) });
-            penStartX = new TextBox { Width = 56, Text = "0" };
+
+            // ---- 3. 排列顺序 ----
+            var groupOrder = new UiGroup("排列顺序");
+            groups.Add(groupOrder);
+            groupOrder.AddButton("书写顺序提前", () => MoveRegionOrder(-1));
+            groupOrder.AddButton("书写顺序推后", () => MoveRegionOrder(1));
+            groupOrder.NewRow();
+            groupOrder.AddButton("撤销", UndoRegions);
+            groupOrder.AddButton("重做", RedoRegions);
+
+            // ---- 4. 模板 ----
+            var groupTemplate = new UiGroup("模板");
+            groups.Add(groupTemplate);
+            groupTemplate.AddButton("区域模板", ManageRegionTemplates);
+
+            // ---- 5. 笔起点 ----
+            var groupPen = new UiGroup("笔起点");
+            groups.Add(groupPen);
+            penStartX = groupPen.AddField("黑色起点 X", "0", 58);
             penStartX.KeyDown += PenStartBoxKeyDown;
-            toolbar.Controls.Add(penStartX);
-            toolbar.Controls.Add(new Label { Text = "Y(向下)", AutoSize = true, Margin = new Padding(4, 7, 0, 0) });
-            penStartY = new TextBox { Width = 56, Text = "0" };
+            penStartY = groupPen.AddField("Y(向下)", "0", 58);
             penStartY.KeyDown += PenStartBoxKeyDown;
-            toolbar.Controls.Add(penStartY);
-            penStartButton = new Button { Text = "笔起点", AutoSize = true, Height = 30 };
-            penStartButton.Click += (sender, args) => PenStartButtonClicked();
-            toolbar.Controls.Add(penStartButton);
+            groupPen.NewRow();
+            penStartButton = groupPen.AddButton("笔起点", PenStartButtonClicked, UiButtonKind.Primary);
+            groupPen.AddButton("读取黑色起点", ReadPenStart);
             penStartTips = new ToolTip();
             penStartTips.SetToolTip(penStartButton, "改了 X/Y 数字后点它 = 按坐标设置预览标记（不修改机器坐标）；数字没改就点它 = 进入图上点选起点。");
             penStartTips.SetToolTip(penStartX, "输入纸面 X 毫米，回车或点「笔起点」生效。");
             penStartTips.SetToolTip(penStartY, "输入从纸顶向下的毫米，回车或点「笔起点」生效。");
-            Button(toolbar, "读取黑色起点", ReadPenStart);
-            Button(toolbar, "生成并载入主界面预览", LoadWritingIntoMainPreview);
-            Button(toolbar, "保存写字项目", SaveWritingProject);
-            Button(toolbar, "打开写字项目", OpenWritingProject);
+            groupPen.Note("改了 X/Y 数字后点「笔起点」= 按坐标设置预览标记（不修改机器坐标）；数字没改就点它 = 进入图上点选起点。");
+
+            // ---- 6. 显示 ----
+            var groupView = new UiGroup("显示");
+            groups.Add(groupView);
+            var snap = groupView.AddCheck("吸附1mm", false);
+            snap.CheckedChanged += (sender, args) => { if (regionCanvas != null) regionCanvas.SnapToGrid = snap.Checked; };
+            var grid = groupView.AddCheck("网格", true);
+            grid.CheckedChanged += (sender, args) => { if (regionCanvas != null) { regionCanvas.ShowGrid = grid.Checked; regionCanvas.Invalidate(); } };
+
+            // ---- 7. 生成与项目 ----
+            var groupRun = new UiGroup("生成与项目");
+            groups.Add(groupRun);
+            groupRun.AddButton("区域笔迹预览", () => Execute(() => {
+                InvalidateWriting();
+                if (!regionsEnabled.Checked) throw new InvalidOperationException("请先勾选多区域单页。");
+                BuildWritingStrokes();
+            }), UiButtonKind.Success);
+            groupRun.NewRow();
+            groupRun.AddButton("生成并载入主界面预览", LoadWritingIntoMainPreview);
+            groupRun.NewRow();
+            groupRun.AddButton("保存写字项目", SaveWritingProject);
+            groupRun.AddButton("打开写字项目", OpenWritingProject);
+
+            // Cards dock from the highest child index downwards, so add them bottom-first.
+            for (int index = groups.Count - 1; index >= 0; index--)
+                column.Controls.Add(groups[index].Card);
+
             regionInfo = new Label { Dock = DockStyle.Bottom, Height = 64, Text = "空白处拖动画新框。拖框内部移动，拖橙点改大小。滚轮缩放，右键平移，都不改变毫米尺寸。蓝框不写，红线是本页笔迹。改过 X/Y 数字后点「笔起点」= 按坐标设置预览标记；数字没改时点它 = 进图上点选（左键定点，右键或 Esc 取消）。" };
             regionCanvas = new RegionCanvas { Regions = regions };
             regionCanvas.PenStartPicked = AcceptPickedPenStart;
@@ -393,23 +612,26 @@ namespace GrblPlotter.AutoWriter
                 r.Height = Math.Min(Math.Round(r.Height, 2), sheet.HeightMm - r.Y);
                 if (string.IsNullOrEmpty(r.Id)) r.Id = Guid.NewGuid().ToString("N");
                 using (var editor = new RegionEditorForm(r, sheet, regions.Count + 1))
-                    if (editor.ShowDialog(this) == DialogResult.OK) {
+                    if (editor.ShowDialog(DialogOwner) == DialogResult.OK) {
                         try { AcceptRegion(editor.Value); }
-                        catch (Exception error) { MessageBox.Show(this, error.Message + "\n未添加区域，正文不会被裁掉。", "区域"); return; }
+                        catch (Exception error) { MessageBox.Show(DialogOwner, error.Message + "\n未添加区域，正文不会被裁掉。", "区域"); return; }
                         StampRegionFont(editor.Value);
                         RememberRegions(); regions.Add(editor.Value); regionCanvas.Selected = regions.Count - 1; InvalidateWriting();
                     }
             };
             regionCanvas.EditRequested = EditRegion;
             regionsEnabled.CheckedChanged += (sender, args) => { UpdatePageMode(); InvalidateWriting(); };
-            tab.Controls.Add(regionCanvas); tab.Controls.Add(regionInfo); tab.Controls.Add(toolbar); tabs.TabPages.Add(tab);
+            split.Panel2.Controls.Add(regionCanvas);   // Fill docks last
+            split.Panel2.Controls.Add(regionInfo);     // Bottom docks first, keeps the lower edge
+            tab.Controls.Add(split);
+            tabs.TabPages.Add(tab);
             tab.Enter += (sender, args) => { RefreshRegionCanvas(); ReadPenStart(); };
         }
         private void ManageRegionTemplates()
         {
             Execute(() => {
                 using (var dialog = new RegionTemplateForm(ReadPage(), regions)) {
-                    if (dialog.ShowDialog(this) != DialogResult.OK) return;
+                    if (dialog.ShowDialog(DialogOwner) != DialogResult.OK) return;
                     var template = dialog.SelectedTemplate;
                     string match = template.DescribeKeep(regions);
                     var updated = template.Apply(regions, dialog.KeepText);
@@ -499,6 +721,7 @@ namespace GrblPlotter.AutoWriter
         private Func<char, BuiltinGlyph> ChainResolver()
         {
             GlyphFontPack pack = SelectedPackOrNull();
+            EnsureSupplementLoaded();
             if (supplementPack != null) pack = pack == null ? supplementPack : pack.OverlayWith(supplementPack);
             return pack == null ? (Func<char, BuiltinGlyph>)BuiltinGlyphLibrary.Resolve : pack.ToResolver();
         }
@@ -506,8 +729,14 @@ namespace GrblPlotter.AutoWriter
         {
             if (region == null || string.IsNullOrEmpty(region.FontPath)) return ChainResolver();
             GlyphFontPack pack = LoadRegionFont(region.FontPath);
+            EnsureSupplementLoaded();
             if (supplementPack != null) pack = pack.OverlayWith(supplementPack);
             return pack.ToResolver();
+        }
+        private void EnsureSupplementLoaded()
+        {
+            if (supplementPack == null && !string.IsNullOrEmpty(supplementPath))
+                supplementPack = GlyphFontPack.LoadFromFile(supplementPath);
         }
         private void StampRegionFont(WritingRegion region)
         {
@@ -530,7 +759,7 @@ namespace GrblPlotter.AutoWriter
             Execute(() => {
                 if (index < 0 || index >= regions.Count) throw new InvalidOperationException("请先点击一个区域。");
                 using (var editor = new RegionEditorForm(regions[index], ReadPage(), index + 1))
-                    if (editor.ShowDialog(this) == DialogResult.OK) {
+                    if (editor.ShowDialog(DialogOwner) == DialogResult.OK) {
                         AcceptRegion(editor.Value);
                         RememberRegions();
                         if (string.IsNullOrEmpty(editor.Value.Id)) editor.Value.Id = string.IsNullOrEmpty(regions[index].Id) ? Guid.NewGuid().ToString("N") : regions[index].Id;
@@ -576,7 +805,8 @@ namespace GrblPlotter.AutoWriter
         }
         private void SaveLastState()
         {
-            var state = new MachineSetupState { Profile = profile, TabIndex = setupTabs.SelectedIndex, Regions = regions.ConvertAll(r => r.Clone()),
+            var state = new MachineSetupState { Profile = profile, TabIndex = setupTabs.SelectedIndex,
+                TabName = setupTabs.SelectedTab.Text, Regions = regions.ConvertAll(r => r.Clone()),
                 FontPath = fontSelector.SelectedIndex > 0 ? Path.GetFullPath(fontPackPaths[fontSelector.SelectedIndex - 1]) : "" };
             foreach (var pair in StateTextFields()) state.Text.Add(pair.Key, pair.Key == "text" ? WritingEditorText.Normalize(pair.Value.Text) : pair.Value.Text);
             foreach (var pair in StateChecks()) state.Checks.Add(pair.Key, pair.Value.Checked);
@@ -614,13 +844,17 @@ namespace GrblPlotter.AutoWriter
                 string supplement;
                 if (state.Text.TryGetValue("supplement", out supplement) && !string.IsNullOrEmpty(supplement))
                 {
-                    if (File.Exists(supplement)) { supplementPath = supplement; supplementPack = GlyphFontPack.LoadFromFile(supplement); }
+                    if (File.Exists(supplement)) { supplementPath = supplement; supplementPack = null; }
                     else warning = (warning == null ? "" : warning + "；") + "补充字库缺失，原字库未改：" + supplement;
                 }
                 string savedPage; int restoredPage;
                 if (state.Text.TryGetValue("selectedPage", out savedPage) && int.TryParse(savedPage, out restoredPage))
                     pageSelector.Value = Math.Max(1, Math.Min(100000, restoredPage));
-                if (state.TabIndex >= 0 && state.TabIndex < setupTabs.TabCount) setupTabs.SelectedIndex = state.TabIndex;
+                int restoredTab = state.TabIndex <= 0 ? 0 : state.TabIndex <= 2 ? 1 : state.TabIndex - 1;
+                if (!string.IsNullOrEmpty(state.TabName))
+                    for (int i = 0; i < setupTabs.TabCount; i++)
+                        if (setupTabs.TabPages[i].Text == state.TabName) { restoredTab = i; break; }
+                if (restoredTab >= 0 && restoredTab < setupTabs.TabCount) setupTabs.SelectedIndex = restoredTab;
                 UpdatePageMode(); RefreshApplyReportQuiet(); InvalidateWriting(); programPreview.Clear();
                 status.Text = "已恢复上次窗口设置；请重新生成预览。";
             }
@@ -634,7 +868,7 @@ namespace GrblPlotter.AutoWriter
             catch (Exception error)
             {
                 status.Text = "上次设置保存失败：" + error.Message;
-                MessageBox.Show(this, status.Text, "窗口设置", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(DialogOwner, status.Text, "窗口设置", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
 
@@ -654,7 +888,7 @@ namespace GrblPlotter.AutoWriter
         private void OpenProfile()
         {
             using (var dialog = new OpenFileDialog { Filter = "机器配置 (*.json)|*.json" })
-                if (dialog.ShowDialog(this) == DialogResult.OK) Execute(() =>
+                if (dialog.ShowDialog(DialogOwner) == DialogResult.OK) Execute(() =>
                 {
                     profile = profiles.Load(dialog.FileName);
                     programPreview.Clear();
@@ -668,7 +902,7 @@ namespace GrblPlotter.AutoWriter
         private void SaveProfile()
         {
             using (var dialog = new SaveFileDialog { Filter = "机器配置 (*.json)|*.json", FileName = "machine-profile.json", DefaultExt = "json" })
-                if (dialog.ShowDialog(this) == DialogResult.OK) Execute(() =>
+                if (dialog.ShowDialog(DialogOwner) == DialogResult.OK) Execute(() =>
                 {
                     profiles.Save(dialog.FileName, profile);
                     status.Text = "已保存：" + dialog.FileName + "（覆盖时保留备份）";
@@ -687,7 +921,7 @@ namespace GrblPlotter.AutoWriter
         private void RefreshApplyReport()
         {
             try { applyText.Text = MachineProfileApplier.BuildReport(profile, ReportOverrides()).ToText(); }
-            catch (Exception error) { MessageBox.Show(this, error.Message, "应用报告", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+            catch (Exception error) { MessageBox.Show(DialogOwner, error.Message, "应用报告", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
         }
 
         private void RefreshApplyReportQuiet()
@@ -821,7 +1055,7 @@ namespace GrblPlotter.AutoWriter
         {
             Execute(() => {
                 using (var dialog = new OpenFileDialog { Filter = "UTF-8 文本 (*.txt)|*.txt|所有文件|*.*" })
-                    if (dialog.ShowDialog(this) == DialogResult.OK)
+                    if (dialog.ShowDialog(DialogOwner) == DialogResult.OK)
                     {
                         writingInputText.Text = WritingEditorText.Normalize(File.ReadAllText(dialog.FileName, new UTF8Encoding(false, true)));
                         status.Text = "已导入 UTF-8 文本。请重新生成预览。";
@@ -835,14 +1069,14 @@ namespace GrblPlotter.AutoWriter
                 if (regionsEnabled.Checked)
                     for (int i = 0; i < regions.Count; i++) hits.AddRange(GlyphCoverageService.Scan(regions[i] == null ? "" : regions[i].Text, ResolverFor(regions[i]), i + 1));
                 else hits.AddRange(GlyphCoverageService.Scan(writingInputText.Text, ChainResolver(), 0));
-                MessageBox.Show(this, GlyphCoverageService.Describe(hits), "缺字报告");
+                MessageBox.Show(DialogOwner, GlyphCoverageService.Describe(hits), "缺字报告");
             });
         }
         private void ChooseSupplement()
         {
             Execute(() => {
                 using (var dialog = new OpenFileDialog { Filter = "字库包 (*.fontpack.json)|*.fontpack.json" })
-                    if (dialog.ShowDialog(this) == DialogResult.OK)
+                    if (dialog.ShowDialog(DialogOwner) == DialogResult.OK)
                     {
                         supplementPack = GlyphFontPack.LoadFromFile(dialog.FileName);
                         supplementPath = Path.GetFullPath(dialog.FileName);
@@ -954,13 +1188,13 @@ namespace GrblPlotter.AutoWriter
             Execute(() => {
                 WritingProject project = CaptureProject();
                 using (var dialog = new SaveFileDialog { Filter = "写字项目 (*.awproject)|*.awproject", DefaultExt = "awproject", FileName = "writing.awproject" })
-                    if (dialog.ShowDialog(this) == DialogResult.OK) { WritingProjectService.Save(dialog.FileName, project); status.Text = "已保存写字项目；机器配置另行保存，覆盖时保留备份。"; }
+                    if (dialog.ShowDialog(DialogOwner) == DialogResult.OK) { WritingProjectService.Save(dialog.FileName, project); status.Text = "已保存写字项目；机器配置另行保存，覆盖时保留备份。"; }
             });
         }
         private void OpenWritingProject()
         {
             using (var dialog = new OpenFileDialog { Filter = "写字项目 (*.awproject)|*.awproject" })
-                if (dialog.ShowDialog(this) == DialogResult.OK) Execute(() => {
+                if (dialog.ShowDialog(DialogOwner) == DialogResult.OK) Execute(() => {
                     WritingProject project = WritingProjectService.Load(dialog.FileName);
                     // Resolve and validate the exact font before changing any current editor fields.
                     GlyphFontPack pack = project.FontPath.Length == 0 ? null : GlyphFontPack.LoadFromFile(project.FontPath);
@@ -1009,7 +1243,11 @@ namespace GrblPlotter.AutoWriter
                 {
                     try
                     {
-                        GlyphFontPack probe = GlyphFontPack.LoadFromFile(path);
+                        // Peek, not LoadFromFile: reading name+count costs milliseconds;
+                        // a full parse is ~0.5 s per pack and stalled the dialog open
+                        // by seconds (2026-10-12 click-stall fix). The real load still
+                        // happens - and revalidates everything - when the pack is used.
+                        GlyphFontPackInfo probe = GlyphFontPack.Peek(path);
                         fontPackPaths.Add(path);
                         fontSelector.Items.Add(probe.Name + "（" + probe.GlyphCount + " 字）");
                     }
@@ -1061,7 +1299,7 @@ namespace GrblPlotter.AutoWriter
                 double? penDown = Override("pendown") ?? profile.PenDownValue;
                 if (!penDown.HasValue) throw new InvalidOperationException("落笔值未知，无法检查连续排队；请显式覆盖或补全配置。");
                 var violations = WritingProgramService.FindContinuousViolations(writingText.Text, penDown.Value);
-                MessageBox.Show(this, violations.Count == 0
+                MessageBox.Show(DialogOwner, violations.Count == 0
                     ? "连续排队检查通过：无 G4 同步块，每个落笔行后紧接 XY 绘制。"
                     : "发现 " + violations.Count + " 项问题：\r\n" + string.Join("\r\n", violations),
                     "连续排队检查", MessageBoxButtons.OK, violations.Count == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
@@ -1074,7 +1312,7 @@ namespace GrblPlotter.AutoWriter
             {
                 if (string.IsNullOrWhiteSpace(writingText.Text)) throw new InvalidOperationException("请先生成写字预览。");
                 using (var dialog = new SaveFileDialog { Filter = "G-code (*.nc)|*.nc", FileName = "autowriter-writing.nc" })
-                    if (dialog.ShowDialog(this) == DialogResult.OK)
+                    if (dialog.ShowDialog(DialogOwner) == DialogResult.OK)
                         File.WriteAllText(dialog.FileName, writingText.Text);
             });
         }
@@ -1418,18 +1656,41 @@ namespace GrblPlotter.AutoWriter
             return strokes;
         }
 
-        private void AddOverride(FlowLayoutPanel panel, string key)
+        /// <summary>One labelled override input; leaving it empty keeps the profile value.</summary>
+        private void AddOverride(UiGroup group, string label, string key)
         {
-            var box = new TextBox { Width = 66 };
+            TextBox box = group.AddField(label, "", 62);
             box.TextChanged += (sender, args) => InvalidateWriting();
-            panel.Controls.Add(box);
             overrides.Add(key, box);
+        }
+
+        /// <summary>Page-size / margin field: adds the label + input pair and wires invalidation.</summary>
+        private TextBox PageField(UiGroup group, string label, string text, int width)
+        {
+            TextBox box = group.AddField(label, text, width);
+            box.TextChanged += (sender, args) => InvalidateWriting();
+            return box;
         }
 
         private void Execute(Action action)
         {
             try { action(); }
-            catch (Exception error) { MessageBox.Show(this, error.Message, "参数或文件错误", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+            catch (Exception error) { MessageBox.Show(DialogOwner, error.Message, "参数或文件错误", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+        }
+
+        /// <summary>
+        /// Owner for every dialog. While embedded in the modern main window this form is not a
+        /// top-level window, and ShowDialog/MessageBox with such an owner can open BEHIND the
+        /// main window (looks like a dead button). TopLevelControl walks up to the real window.
+        /// </summary>
+        private IWin32Window DialogOwner
+        { get { return TopLevelControl ?? (IWin32Window)this; } }
+
+        /// <summary>Switch tabs (0 机器配置, 1 步进计算与校准, 2 写字预览, 3 区域排版).</summary>
+        internal void ShowTab(int index)
+        {
+            if (setupTabs != null && index >= 0 && index < setupTabs.TabCount)
+                setupTabs.SelectedIndex = index;
         }
 
         private double Value(string key)

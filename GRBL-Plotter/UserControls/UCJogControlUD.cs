@@ -437,7 +437,7 @@ namespace GrblPlotter.UserControls
             {
                 for (i = 0; i < jogRaster; i++)
                 {
-                    SolidBrush bkgrColor = new SolidBrush(Colors.ColorFromHSV(240, (double)(jogRaster - i) / jogRaster, 1));// GroupColor.FromArgb(255, 0, 0, (jogRaster-i) * (255 / jogRaster)));
+                    SolidBrush bkgrColor = new SolidBrush(GrblPlotter.AutoWriter.Ui.UiTheme.JogFill(i, jogRaster));
                     if (i == (jogRaster - jogRasterMark))
                         bkgrColor = new SolidBrush(Color.FromArgb(255, 0, 255, 0));
                     //          locationX = i * stepX;

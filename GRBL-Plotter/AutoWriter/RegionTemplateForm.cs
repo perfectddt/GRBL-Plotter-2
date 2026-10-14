@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Windows.Forms;
@@ -26,6 +26,7 @@ namespace GrblPlotter.AutoWriter {
    Add(bottom,"应用选中模板",()=>{var t=Selection();t.Apply(current,keep.Checked);if(!keep.Checked&&MessageBox.Show(this,"将清空当前区域文字。建议先保存写字项目。确定应用？","应用模板",MessageBoxButtons.OKCancel)!=DialogResult.OK)return;SelectedTemplate=t;DialogResult=DialogResult.OK;Close();});
    list.SelectedIndexChanged+=(s,e)=>{if(list.SelectedItem==null)return;var t=Selection();name.Text=t.Name;preview.Sheet=t.Sheet;preview.Regions=t.Apply(new List<WritingRegion>(),false);preview.Invalidate();};
    Controls.Add(preview);Controls.Add(list);Controls.Add(note);Controls.Add(bottom);Controls.Add(bar);RefreshList(null);
+   Ui.UiTheme.ApplyDialogSkin(this,true);
   }
   RegionTemplate Selection(){var t=list.SelectedItem as RegionTemplate;if(t==null)throw new InvalidOperationException("请选择一个模板。");return t;}
   void Add(Control bar,string text,Action action){var button=new Button{Text=text,AutoSize=true};button.Click+=(s,e)=>{try{action();}catch(Exception error){MessageBox.Show(this,error.Message,"模板操作未完成");}};bar.Controls.Add(button);}

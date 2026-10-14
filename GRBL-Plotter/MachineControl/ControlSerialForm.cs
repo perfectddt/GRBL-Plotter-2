@@ -192,6 +192,11 @@ namespace GrblPlotter
             Set2ndSerial(handle2);
             Set3rdSerial(handle3);
             InitializeComponent();
+            if (MainForm.ModernUiConfig.ModernEnabled)
+            {
+                AutoWriter.Ui.UiTheme.ApplyControlSkin(this);
+                BackColor = AutoWriter.Ui.UiTheme.Background;
+            }
             SetSerialFormToolTips();
             mParserState.Reset();
             CultureInfo ci = new CultureInfo(Properties.Settings.Default.guiLanguage);

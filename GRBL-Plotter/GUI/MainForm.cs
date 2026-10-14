@@ -180,6 +180,13 @@ namespace GrblPlotter
             });
             RemoveCursorNavigation(this.Controls);
 
+            autoWriterMenu.DropDownItems.Add(new ToolStripSeparator());
+            autoWriterMenu.DropDownItems.Add("切换 现代/经典 界面（重启生效）", null, (sender, args) =>
+            {
+                ModernUiToggle();
+            });
+            ModernShellApply();         // 2026-10-12: runtime re-layout into the three-column shell (no designer changes)
+
             System.Windows.Forms.Application.ThreadException += new System.Threading.ThreadExceptionEventHandler(Application_ThreadException);
             AppDomain currentDomain = AppDomain.CurrentDomain;
             currentDomain.UnhandledException += new UnhandledExceptionEventHandler(Application_UnhandledException);
@@ -376,9 +383,12 @@ namespace GrblPlotter
         }
 
         // close Main form
-        private void ShowMachineSetup()
+        private void ShowMachineSetup(int selectTab = -1)
         {
             if (shutDown || IsDisposed || Disposing) return;
+            var openTimer = System.Diagnostics.Stopwatch.StartNew();
+            bool created = machineSetupForm == null || machineSetupForm.IsDisposed;
+            long initializeMs = 0;
             if (machineSetupForm == null || machineSetupForm.IsDisposed)
             {
                 var form = new AutoWriter.MachineSetupForm(code =>
@@ -392,19 +402,37 @@ namespace GrblPlotter
                 form.PenStartRequested = (x, y) => SetPenStart(x, y);
                 form.PenStartQuery = () => { XyPoint p = CurrentPenStart(); return new[] { p.X, p.Y }; };
                 machineSetupForm = form;
+                try { AutoWriter.Ui.UiTheme.ApplyDialogSkin(form, false); } catch { /* cosmetic only */ }
                 form.FormClosed += (sender, args) =>
                 {
                     if (ReferenceEquals(machineSetupForm, form)) machineSetupForm = null;
+                    try { RefreshPageSummary(); } catch { /* left-column summary only */ }
                 };
-                form.Show(this);
+                initializeMs = openTimer.ElapsedMilliseconds;
             }
-            else
+            // 2026-10-12: in the modern shell the setup window becomes a center page
+            // (预览 / 写字配置 segment) instead of a separate window - same instance, same logic.
+            // Select while hidden so showing the embedded page does not lay out the saved tab first.
+            if (selectTab >= 0) machineSetupForm.ShowTab(selectTab);
+            if (modernShellActive)
             {
-                if (machineSetupForm.WindowState == FormWindowState.Minimized)
-                    machineSetupForm.WindowState = FormWindowState.Normal;
-                machineSetupForm.Show();
-                machineSetupForm.Activate();
+                try
+                {
+                    if (EmbedMachineSetup(machineSetupForm))
+                    {
+                        Logger.Info("Setup page opened: tab={0}, created={1}, initializeMs={2}, totalMs={3}",
+                            selectTab, created, initializeMs, openTimer.ElapsedMilliseconds);
+                        return;
+                    }
+                }
+                catch (Exception error) { Logger.Error(error, "EmbedMachineSetup - falling back to window"); }
             }
+            if (machineSetupForm.WindowState == FormWindowState.Minimized)
+                machineSetupForm.WindowState = FormWindowState.Normal;
+            machineSetupForm.Show();
+            machineSetupForm.Activate();
+            Logger.Info("Setup window opened: tab={0}, created={1}, initializeMs={2}, totalMs={3}",
+                selectTab, created, initializeMs, openTimer.ElapsedMilliseconds);
         }
 
         private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
