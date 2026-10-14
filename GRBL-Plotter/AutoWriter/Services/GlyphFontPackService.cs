@@ -18,6 +18,8 @@ using System.Globalization;
 using System.IO;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
+using System.Text;
+using System.Text.RegularExpressions;
 using GrblPlotter.AutoWriter.Models;
 
 namespace GrblPlotter.AutoWriter.Services
@@ -74,12 +76,41 @@ namespace GrblPlotter.AutoWriter.Services
             AdvanceSpaceMm = advanceSpaceMm;
         }
 
+        /* 2026-10-12 click-stall fix: one full pack is ~8 MB of JSON / ~9.6k glyphs and
+         * costs ~0.5 s to parse; the setup dialog used to parse EVERY discovered pack
+         * (10 in the dev tree, ~4 s) on the UI thread just to fill the font selector.
+         * Loads are now cached by path+size+mtime, and the selector uses Peek(). */
+        private static readonly object CacheLock = new object();
+        private static readonly Dictionary<string, GlyphFontPack> Cache =
+            new Dictionary<string, GlyphFontPack>(StringComparer.OrdinalIgnoreCase);
+
+        private static string CacheKey(string path)
+        {
+            var info = new FileInfo(path);
+            return path + "|" + info.Length + "|" + info.LastWriteTimeUtc.Ticks;
+        }
+
         public static GlyphFontPack LoadFromFile(string path)
         {
             if (string.IsNullOrEmpty(path))
                 throw new ArgumentException("字库包路径为空。", "path");
             if (!File.Exists(path))
                 throw new FileNotFoundException("字库包文件不存在：" + path, path);
+            string key = CacheKey(path);
+            lock (CacheLock)
+            {
+                GlyphFontPack cached;
+                if (Cache.TryGetValue(key, out cached))
+                    return cached;
+            }
+            GlyphFontPack pack = ParseFromFile(path);
+            lock (CacheLock) { Cache[key] = pack; }
+            return pack;
+        }
+
+        /// <summary>Full parse + validation; use LoadFromFile unless the cache must be bypassed.</summary>
+        private static GlyphFontPack ParseFromFile(string path)
+        {
 
             GlyphFontPackFile file;
             try
@@ -157,6 +188,116 @@ namespace GrblPlotter.AutoWriter.Services
                                      file.AdvanceCjkMm, file.AdvanceSpaceMm);
         }
 
+        /// <summary>
+        /// Cheap header read for the font selector: pack name + glyph count WITHOUT
+        /// deserializing the pack (~8 MB / 0.5 s each). The generator emits compact
+        /// one-line JSON with glyphs as [{"c":"X","strokes":[...]}, ...] first and the
+        /// metadata fields (name, source, ...) at the END (Python sort_keys), so we
+        /// count the "c":" byte pattern while streaming and regex the tail chunk for
+        /// the name. The pattern has no leading brace on purpose: entries carrying a
+        /// per-glyph advance serialize as {"advanceMm":...,"c":"X",...} (alphabetical
+        /// keys). ASCII pattern matching on raw bytes is UTF-8 safe; stroke arrays are
+        /// pure numbers so the pattern can only appear as a glyph key. The count is a
+        /// display label only - LoadFromFile revalidates everything on real use.
+        /// </summary>
+        public static GlyphFontPackInfo Peek(string path)
+        {
+            if (string.IsNullOrEmpty(path))
+                throw new ArgumentException("字库包路径为空。", "path");
+            if (!File.Exists(path))
+                throw new FileNotFoundException("字库包文件不存在：" + path, path);
+
+            byte[] pattern = Encoding.ASCII.GetBytes("\"c\":\"");
+            int count = 0;
+            // Sliding window [carry | new chunk]. Every match fully inside the window
+            // is counted exactly once: a match starting in the carried overlap always
+            // extends past the previous chunk's end (carry is shorter than the pattern),
+            // so it could not have been counted before; matches starting in the new
+            // bytes are new by definition.
+            byte[] window = new byte[1 << 16];
+            int carryLen = 0;
+            var tail = new MemoryStream();
+            using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16))
+            {
+                int read;
+                while ((read = stream.Read(window, carryLen, window.Length - carryLen)) > 0)
+                {
+                    int total = carryLen + read;
+                    count += CountOccurrences(window, 0, total, pattern);
+
+                    // keep only the trailing 32 KB for the metadata regex (the new
+                    // chunk sits at window[carryLen .. carryLen+read] - write it out
+                    // BEFORE the overlap copy below clobbers the window head)
+                    tail.Write(window, carryLen, read);
+                    if (tail.Length > 32768)
+                    {
+                        byte[] kept = tail.ToArray();
+                        tail.SetLength(0);
+                        tail.Write(kept, kept.Length - 32768, 32768);
+                    }
+
+                    int newCarry = Math.Min(pattern.Length - 1, total);
+                    Buffer.BlockCopy(window, total - newCarry, window, 0, newCarry);
+                    carryLen = newCarry;
+                }
+            }
+            if (count == 0)
+                throw new InvalidOperationException("字库包没有任何字形：" + path);
+
+            string tailText = Encoding.UTF8.GetString(tail.ToArray());
+            var match = Regex.Match(tailText, "\"name\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
+            if (!match.Success)
+                throw new InvalidOperationException("字库包缺少 name 字段：" + path);
+            return new GlyphFontPackInfo(UnescapeJson(match.Groups[1].Value), count, path);
+        }
+
+        private static int CountOccurrences(byte[] haystack, int offset, int length, byte[] needle)
+        {
+            int found = 0;
+            int limit = offset + length - needle.Length;
+            for (int i = offset; i <= limit; i++)
+            {
+                bool hit = true;
+                for (int j = 0; j < needle.Length; j++)
+                    if (haystack[i + j] != needle[j]) { hit = false; break; }
+                if (hit) found++;
+            }
+            return found;
+        }
+
+        private static string UnescapeJson(string value)
+        {
+            if (value.IndexOf('\\') < 0) return value;
+            var builder = new StringBuilder(value.Length);
+            for (int i = 0; i < value.Length; i++)
+            {
+                char c = value[i];
+                if (c == '\\' && i + 1 < value.Length)
+                {
+                    char next = value[++i];
+                    switch (next)
+                    {
+                        case '"': builder.Append('"'); break;
+                        case '\\': builder.Append('\\'); break;
+                        case '/': builder.Append('/'); break;
+                        case 'n': builder.Append('\n'); break;
+                        case 't': builder.Append('\t'); break;
+                        case 'r': builder.Append('\r'); break;
+                        case 'u':
+                            if (i + 4 < value.Length)
+                            {
+                                builder.Append((char)Convert.ToInt32(value.Substring(i + 1, 4), 16));
+                                i += 4;
+                            }
+                            break;
+                        default: builder.Append(next); break;
+                    }
+                }
+                else builder.Append(c);
+            }
+            return builder.ToString();
+        }
+
         private static bool ValidAdvance(double value)
         { return !double.IsNaN(value) && !double.IsInfinity(value) && value > 0 && value <= BuiltinGlyphLibrary.EmSizeMm * 4; }
 
@@ -214,6 +355,21 @@ namespace GrblPlotter.AutoWriter.Services
         }
     }
 
+    /// <summary>Name + glyph count of a pack, read cheaply by GlyphFontPack.Peek.</summary>
+    public sealed class GlyphFontPackInfo
+    {
+        public string Name { get; private set; }
+        public int GlyphCount { get; private set; }
+        public string Path { get; private set; }
+
+        public GlyphFontPackInfo(string name, int glyphCount, string path)
+        {
+            Name = name;
+            GlyphCount = glyphCount;
+            Path = path;
+        }
+    }
+
     /// <summary>Discovers glyph font packs for the writing UI font selector.
     /// Scans the Fonts folder next to the executable (deployed layout) and the
     /// dev-tree source location (bin/Debug -> ../../AutoWriter/Fonts). Discovery
@@ -248,7 +404,25 @@ namespace GrblPlotter.AutoWriter.Services
                 catch (UnauthorizedAccessException) { }
                 catch (IOException) { }
             }
-            return results;
+            /* 2026-10-12: the deployed copy (bin/AutoWriter/Fonts) and the dev-tree
+             * copy (../../AutoWriter/Fonts) are the same files in a dev build - listing
+             * both made the selector show every pack twice (and probe-parse each copy).
+             * Drop duplicates by file name + size; the first hit wins, which is the
+             * deployed layout because it is scanned first. */
+            var byIdentity = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var deduped = new List<string>();
+            foreach (string file in results)
+            {
+                string identity;
+                try
+                {
+                    var info = new FileInfo(file);
+                    identity = info.Name + "|" + info.Length;
+                }
+                catch (Exception) { identity = file; }
+                if (byIdentity.Add(identity)) deduped.Add(file);
+            }
+            return deduped;
         }
     }
 }
