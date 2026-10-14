@@ -47,3 +47,32 @@
 - 测试脚本纯 ASCII（PS5.1 按 ANSI 解析无 BOM）；Write-Host 不回传 ⇒ 结论写 `artifacts/stage0/*.txt` 再读；`&` 调脚本 `exit 1` 不抛异常 ⇒ **必查 `$LASTEXITCODE`**；各 test 脚本含同名类型须独立进程。
 - 新 .cs 含中文必须 **UTF-8 BOM**（ACP=936）；Python 写文件会 CRLF→LF，写完统一回 CRLF（保 BOM）再 `git diff --stat` 复核。
 - 🔴 WinForms 加按钮/加列四坑：① resx 插 `btnXXX.*` + ZOrder/TabIndex；② `LayoutSettings` 内 `Columns.Styles` 重写为 **N 项、和恰 100**（漏了→新列 AutoSize 挤邻列，不报错；改法 html.unescape→改→escape 写回）；③ 窗体同步加宽；④ Designer 五件套 + 查同控件被 Add 两次的残留。守卫：`test-stage1-unlock-layout.ps1`（反射强制布局断言）。
+
+## 现代界面外壳（2026-10-12 U1–U4 实装）
+- **布局机制**：`AutoWriter/Ui/ModernShell.cs`（partial MainForm）运行时 re-parent，Designer/resx/功能零改动；模式存 `%LOCALAPPDATA%\GRBL_Plotter\AutoWriter\ui-layout.json`（含 "classic"=经典，默认现代），AutoWriter 菜单可切换（重启生效）。新界面改动只碰此文件 + `UiTheme.cs`。
+- **WinForms 停靠规则（踩过）**：按 z-index 从高到低停靠；Fill 控件必须 `SetChildIndex(root,0)` 且最后加；被替换的 Fill 容器必须改 `Dock=None` 再 Visible=false，否则吃掉新容器空间；MakeCard 卡片内标题栏后加（高 index 先靠上边缘）。
+- **控件可见性**：控件 `Visible` 要求全部祖先可见，反射测试断言前必须 `form.Show()`。
+- **反射 harness 构造 MainForm**：exe 必须带 NLog.config（编译到 bin\Debug 旁运行）；无消息泵进程 WinForms 清理崩 0xC000041D → 判定看输出标记不看退出码；CloseMainWindow 会命中常驻 COM CNC 窗（关闭=隐藏），强杀后启动稳定仍算过。见 `scripts/test-modern-shell.ps1`。
+- **配置窗两个密集页签的排布**：`MachineSetupForm` 的「应用与写字预览」「区域排版」均按**左滚动卡片列 + 右预览/画布**组织（避免竖直堆叠被 465px 高的嵌入区压成大量滚动）。分组容器用 `UiGroup`（见下）。
+
+## UiGroup（2026-10-12 新增，用于把平铺按钮改成分组卡片）
+- 位置 `AutoWriter/Ui/UiTheme.cs`。用法：`var g = new UiGroup("标题"); g.Row.Controls.Add(...); g.NewRow(4); ...` 最后把 `g.Card` 按**由下到上** Add 到列容器（高 index 先停靠 = 在上）。
+- 配套：`UiTheme.FieldLabel(text)`、`Field(text,width)`、`AddButton(panel,text,action,kind,height)`、`AddCheck(panel,text,checked,changed)`、`AddNote(body,text)`。
+- **教训（方向性）**：用户反对用「更多 ▾」下拉**隐藏**按钮；要的是**重新分组排布**。以后整理密集界面，默认走分组卡片，不要折叠。
+- **对齐（第五轮，通用规则）**：行内控件**不要靠手写 margin 对齐**。统一 `ControlHeight` + 容器在布局时统一算 `Top=(行高-控件高)/2`；**Label/CheckBox 必须 `AutoSize=false` + 固定高 + `TextAlign=MiddleLeft`**，否则盒心对齐了文字仍偏高。同一页签的卡片要共用同一个 `Left/Width`。
+- 守卫脚本 `scripts/test-setup-tabs.ps1`：断言上述三点（卡片同左同宽、不塌陷、同行同一基线）+ 每个按钮仍在位可见。改这两个页签后必须跑。
+- 界面语言：新 UI 硬编码中文（与 AutoWriter 菜单同模式）；ControlSetupForm 换肤**不换字体**（本地化 resx 防裁切），AutoWriter 自有弹窗可换。
+
+## UI 布满与对齐（用户于 2026-10-13 重新明确）
+- 用户纠正：此前的项目记忆不等于其以前对话的 skill。本次规则以当前明确说明为准。
+- 按钮组布满卡片可用宽度，按统一列划分；同列按钮等宽、左右边缘上下对齐，同行文字垂直居中。两按钮行均分宽度，单按钮行铺满。不得仅按文字宽度留下大片右侧空白。
+- 区域编辑、排列顺序采用两列网格；勾选方框与文字居中对齐。统一字体与字号，并保留主操作颜色层次。
+
+## 配置页签统一（2026-10-13）
+- 原「步进参数计算」「校准程序预览」合并为「步进计算与校准」。现为 0 机器配置 / 1 步进计算与校准 / 2 应用与写字预览 / 3 区域排版，现代外壳入口已更新。
+- 所有页签统一浅底、白色内容、左侧 360 卡片列、右侧详情/预览；计算输入共用标签宽度，预览标题 Dock=Top 不覆盖内容。
+- 窗口状态新增可选 TabName，以名称恢复页签；旧记录的 1/2 合并到1，3映射2，4映射3。已验证旧区域页与新写字页恢复。
+
+## 布局守卫补充（2026-10-14）
+- MachineSetupForm 左侧导航列=SplitContainer，默认 360、可拖（SplitterWidth=6、CardBorder 可见）；`SplitterDistance` 禁止在 Form.Load 里设（页面未布局必抛），统一走 `ApplySplitDistanceWhenLaidOut`。探针 `scripts/test-setup-nav-width.ps1` 可复跑。
+- 提交前验证历史可构建：`git worktree add <临时目录> <commit>` + 主仓 `packages` 用 junction 链入 + 跑该 worktree 的 `scripts/build.ps1 -Debug -SkipRestore`；删 junction 用 `[IO.Directory]::Delete()`（`cmd rmdir` 在 Git Bash 下引号失效）。重排历史用 cherry-pick + `git branch -f`，不用 reset。分组提交注意依赖顺序（如 GlyphFontPack.Peek 必须先于用它的 MachineSetupForm）。
