@@ -9,6 +9,8 @@ namespace GrblPlotter.AutoWriter.Services
     [DataContract]
     public sealed class WritingProject
     {
+        [DataMember(IsRequired = false)] public System.Collections.Generic.List<PageDrawing> Drawings { get; set; }
+        [DataMember(IsRequired = false)] public string AnchorSourceText { get; set; }
         [DataMember(IsRequired = false)] public bool RegionsEnabled { get; set; }
         [DataMember(IsRequired = false)] public System.Collections.Generic.List<WritingRegion> Regions { get; set; }
         [DataMember(IsRequired = false)] public int SelectedPage { get; set; }
@@ -41,11 +43,12 @@ namespace GrblPlotter.AutoWriter.Services
         public void Validate()
         {
             if (SelectedPage < 0) throw new InvalidDataException("页码无效。");
-            if (Version != 1) throw new InvalidDataException("不支持的写字项目版本。");
+            if (Version < 1 || Version > 6) throw new InvalidDataException("不支持的写字项目版本。");
             if (Text == null || FontPath == null || FontSha256 == null || Page == null) throw new InvalidDataException("项目字段不完整。");
             if (SupplementPath == null) SupplementPath = "";
             if (SupplementSha256 == null) SupplementSha256 = "";
             Page.Validate();
+            PageDrawing.Validate(Drawings, Page);
             if (Regions != null) foreach (var region in Regions)
             {
                 if (region == null) throw new InvalidDataException("区域为空。");

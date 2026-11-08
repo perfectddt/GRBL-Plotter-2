@@ -31,6 +31,7 @@ namespace GrblPlotter.UserControls
     {
         private readonly float DpiScaling;
         private bool isLarge = true;
+        private bool modernLayout;
         private readonly int controlHeightFold = MyControl.MinimumHeightFolded;
         private readonly int controlHeightUnfold = 150;
 
@@ -102,19 +103,33 @@ namespace GrblPlotter.UserControls
 			SetStatusSimulationPause(true);
 		}
 		
+        /// <summary>
+        /// Cosmetic hook for the modern shell: the surrounding card already captions this group
+        /// ("书写"), so the English group-box title is dropped; status labels keep their runtime
+        /// colours, now mapped through the soft palette by MyControl.SetLabelSave.
+        /// </summary>
+        internal void EnableModernLayout()
+        {
+            modernLayout = true;
+            GbStreaming.Text = "";
+            LblStatusGrbl.BackColor = AutoWriter.Ui.UiTheme.StatusFill(LblStatusGrbl.BackColor);
+            LblStatusStreaming.BackColor = AutoWriter.Ui.UiTheme.StatusFill(LblStatusStreaming.BackColor);
+        }
+
         internal void SetHeight(bool setLarge)
         {
             if (setLarge)
             {
-                GbStreaming.BackColor = MyControl.PanelBackColor;   // Color.WhiteSmoke;
+                GbStreaming.BackColor = modernLayout ? AutoWriter.Ui.UiTheme.Card : MyControl.PanelBackColor;   // Color.WhiteSmoke;
                 GbStreaming.ForeColor = MyControl.PanelForeColor;
-                SetControlHeight(controlHeightUnfold); 
+                SetControlHeight(controlHeightUnfold);
             }
             else
             {
-                GbStreaming.BackColor = MyControl.NotifyYellow;
-                GbStreaming.ForeColor = Colors.ContrastColor(MyControl.NotifyYellow);
-                SetControlHeight(controlHeightFold); 
+                // modern shell: a folded card stays white - the height change alone signals the state
+                GbStreaming.BackColor = modernLayout ? AutoWriter.Ui.UiTheme.Card : MyControl.NotifyYellow;
+                GbStreaming.ForeColor = Colors.ContrastColor(GbStreaming.BackColor);
+                SetControlHeight(controlHeightFold);
             }
             Invalidate();
         }

@@ -594,10 +594,16 @@ namespace GrblPlotter.UserControls
         }
         internal void SetLabelSave(Label l, String s, Color c)
         {
+            /* Modern shell: route the fill through the soft semantic palette. ContrastColor was
+             * computed for the saturated original and can be unreadable on the softened fill
+             * (white on light blue for Fuchsia), so remapped fills take the theme's dark text.
+             * StatusFill returns the input unchanged in classic mode = historical behaviour. */
+            Color fill = GrblPlotter.AutoWriter.Ui.UiTheme.StatusFill(c);
+            Color fore = fill != c ? GrblPlotter.AutoWriter.Ui.UiTheme.Text : Colors.ContrastColor(c);
             if (l.InvokeRequired)
-            { l.BeginInvoke((MethodInvoker)delegate () { l.Text = s; l.BackColor = c; l.ForeColor = Colors.ContrastColor(c); }); }
+            { l.BeginInvoke((MethodInvoker)delegate () { l.Text = s; l.BackColor = fill; l.ForeColor = fore; }); }
             else
-            { l.Text = s; l.BackColor = c; l.ForeColor = Colors.ContrastColor(c); }
+            { l.Text = s; l.BackColor = fill; l.ForeColor = fore; }
         }
 
         /*

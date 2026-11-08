@@ -101,6 +101,7 @@ namespace GrblPlotter.AutoWriter.Services
                 {
                     PageNumber = page.PageNumber,
                     LineCount = page.LineCount,
+                    Anchors = page.Anchors, SourceText = page.SourceText,
                     Strokes = Apply(page.Strokes, seed + i * 1009, amountMm, sheet)
                 });
             }
@@ -182,7 +183,7 @@ namespace GrblPlotter.AutoWriter.Services
             {
                 var strokes = new List<WritingStroke>(page.Strokes ?? new WritingStroke[0]);
                 strokes.AddRange(lines);
-                output.Add(new WritingLayoutPage { PageNumber = page.PageNumber, LineCount = page.LineCount, Strokes = strokes });
+                output.Add(new WritingLayoutPage { PageNumber = page.PageNumber, LineCount = page.LineCount, Strokes = strokes, Anchors = page.Anchors, SourceText = page.SourceText });
             }
             return output;
         }

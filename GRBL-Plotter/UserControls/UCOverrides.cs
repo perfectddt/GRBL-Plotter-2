@@ -61,18 +61,22 @@ namespace GrblPlotter.UserControls
             LblSpindleSet.Text = "100%";
         }
 
+        // Modern shell: folded cards stay white - the height change alone signals the state.
+        private bool modernLayout;
+        internal void EnableModernSkin() { modernLayout = true; }
+
         internal void SetHeight(bool setLarge)
         {
             UpdateHeight();
             if (setLarge)
             {
-                GbOverrides.BackColor = MyControl.PanelBackColor;	// Color.WhiteSmoke;
+                GbOverrides.BackColor = modernLayout ? AutoWriter.Ui.UiTheme.Card : MyControl.PanelBackColor;	// Color.WhiteSmoke;
 				GbOverrides.ForeColor = MyControl.PanelForeColor;
                 SetControlHeight(controlHeightUnfold); BtnSetup.Visible = true;
             }
             else
             {
-                GbOverrides.BackColor = MyControl.NotifyYellow;
+                GbOverrides.BackColor = modernLayout ? AutoWriter.Ui.UiTheme.Card : MyControl.NotifyYellow;
  				GbOverrides.ForeColor = Colors.ContrastColor(MyControl.NotifyYellow);
                 SetControlHeight(controlHeightFold); BtnSetup.Visible = false;
             }

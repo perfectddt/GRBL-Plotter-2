@@ -103,8 +103,8 @@ namespace GrblPlotter.UserControls
         }
         private void UCJogControlAll_Load(object sender, EventArgs e)
         {
-            MyControl.SetSetupBtnAppearance(BtnSetup);
-        //    SetUserControlSize();
+            if (!modernCentered) MyControl.SetSetupBtnAppearance(BtnSetup);
+            else { BtnSetup.Text = "设置"; BtnSetup.Image = null; BtnSetup.BackgroundImage = null; }   // flat text button, not the yellow gear
             userControlJogControludA.SetAxisName("A");
             userControlJogControludB.SetAxisName("B");
             userControlJogControludC.SetAxisName("C");
@@ -158,15 +158,16 @@ namespace GrblPlotter.UserControls
             if (setLarge)
             {
                 BtnSetup.Visible = true;
-                GbJogControl.BackColor = MyControl.PanelBackColor;  // Color.WhiteSmoke;
+                GbJogControl.BackColor = modernCentered ? AutoWriter.Ui.UiTheme.Card : MyControl.PanelBackColor;
                 GbJogControl.ForeColor = MyControl.PanelForeColor;
                 SetControlHeight(controlHeightUnfold);
             }
             else
             {
                 BtnSetup.Visible = false;
-                GbJogControl.BackColor = MyControl.NotifyYellow;
-                GbJogControl.ForeColor = Colors.ContrastColor(MyControl.NotifyYellow);
+                // modern shell: a folded card stays white - the height change alone signals the state
+                GbJogControl.BackColor = modernCentered ? AutoWriter.Ui.UiTheme.Card : MyControl.NotifyYellow;
+                GbJogControl.ForeColor = Colors.ContrastColor(GbJogControl.BackColor);
                 SetControlHeight(controlHeightFold);
             }
             isLarge = setLarge;

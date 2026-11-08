@@ -179,7 +179,7 @@ namespace GrblPlotter.UserControls
 
         private void UserControlDRO_Load(object sender, EventArgs e)
         {
-            MyControl.SetSetupBtnAppearance(BtnSetup);
+            if (!modernLayout) MyControl.SetSetupBtnAppearance(BtnSetup);   // modern shell restyled it as a flat text button already
             ZeroString = "0.000";
             ZeroCommand = "G10L20P0";
             MainWidth = Screen.PrimaryScreen.WorkingArea.Width;//  Properties.Settings.Default.mainFormSize.Width;

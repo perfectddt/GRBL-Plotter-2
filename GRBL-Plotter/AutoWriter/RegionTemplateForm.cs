@@ -20,6 +20,7 @@ namespace GrblPlotter.AutoWriter {
    Add(bar,"保存当前布局",()=>{var t=RegionTemplate.Create(name.Text,sheet,current);service.Save(t);RefreshList(t.Id);});
    Add(bar,"重命名",()=>{var t=Selection();var old=t.Name;try{t.Name=name.Text;t.Validate();service.Save(t);}catch{t.Name=old;throw;}RefreshList(t.Id);});
    Add(bar,"另存副本",()=>{var t=service.Copy(Selection(),name.Text);RefreshList(t.Id);});
+   Add(bar,"删除模板",()=>{var t=Selection();if(MessageBox.Show(this,"删除模板“"+t.Name+"”？当前页面内容不会被删除。","删除模板",MessageBoxButtons.OKCancel,MessageBoxIcon.Question)==DialogResult.OK){service.Delete(t);preview.Regions=new List<WritingRegion>();preview.Invalidate();RefreshList(null);}});
    Add(bar,"导入",()=>{using(var d=new OpenFileDialog{Filter="区域模板|*.awtemplate"})if(d.ShowDialog(this)==DialogResult.OK){var t=RegionTemplateService.Read(d.FileName);var copy=service.Copy(t,t.Name);RefreshList(copy.Id);}});
    Add(bar,"导出",()=>{var t=Selection();using(var d=new SaveFileDialog{Filter="区域模板|*.awtemplate",FileName="区域布局.awtemplate"})if(d.ShowDialog(this)==DialogResult.OK)RegionTemplateService.Write(d.FileName,t);});
    var bottom=new FlowLayoutPanel{Dock=DockStyle.Bottom,AutoSize=true,Padding=new Padding(6)};bottom.Controls.Add(keep);

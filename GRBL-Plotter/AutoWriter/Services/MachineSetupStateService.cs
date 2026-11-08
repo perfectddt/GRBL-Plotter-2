@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Collections.Generic;
 using System.Runtime.Serialization;
@@ -12,6 +12,8 @@ namespace GrblPlotter.AutoWriter.Services
     public sealed class MachineSetupState
     {
         [DataMember(IsRequired = false)] public List<WritingRegion> Regions;
+        [DataMember(IsRequired = false)] public List<PageDrawing> Drawings;
+        [DataMember(IsRequired = false)] public string AnchorSourceText;
         [DataMember(IsRequired = true)] public int Version = 1;
         [DataMember(IsRequired = true)] public MachineProfile Profile;
         [DataMember(IsRequired = true)] public Dictionary<string, string> Text = new Dictionary<string, string>();
@@ -21,7 +23,8 @@ namespace GrblPlotter.AutoWriter.Services
         [DataMember(IsRequired = false)] public string TabName;
         public void Validate()
         {
-            if (Version != 1 || Profile == null || Text == null || Checks == null || FontPath == null)
+            PageDrawing.Validate(Drawings, new PageLayoutOptions { WidthMm = double.MaxValue, HeightMm = double.MaxValue });
+            if ((Version < 1 || Version > 5) || Profile == null || Text == null || Checks == null || FontPath == null)
                 throw new InvalidDataException("上次窗口设置版本不支持或字段不完整。");
             if (Regions != null) foreach (var region in Regions)
             {

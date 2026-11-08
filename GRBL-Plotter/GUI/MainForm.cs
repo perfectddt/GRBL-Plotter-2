@@ -160,6 +160,11 @@ namespace GrblPlotter
             writingPageStatus = new Label { Dock = DockStyle.Fill, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(8, 0, 0, 0), Text = writingPageTask.StatusText };
             writingPageConfirm = new Button { Text = "已换纸并确认位置", Dock = DockStyle.Right, Width = 170, Enabled = false };
             writingPageConfirm.Click += (sender, args) => ConfirmWritingPaperChange();
+            if (ModernUiConfig.ModernEnabled)   // skin the AutoWriter bar like the setup dialog's task bar; classic mode keeps the native look
+            {
+                writingPageStatus.Font = AutoWriter.Ui.UiTheme.SafeFont(9f);
+                AutoWriter.Ui.UiTheme.StyleFlatButton(writingPageConfirm, AutoWriter.Ui.UiButtonKind.Success);
+            }
             writingPageBar.Controls.Add(writingPageStatus);
             writingPageBar.Controls.Add(writingPageConfirm);
             Controls.Add(writingPageBar);
@@ -402,6 +407,20 @@ namespace GrblPlotter
                 form.PenStartRequested = (x, y) => SetPenStart(x, y);
                 form.PenStartQuery = () => { XyPoint p = CurrentPenStart(); return new[] { p.X, p.Y }; };
                 machineSetupForm = form;
+                form.CanEditPaper = () => !isStreaming && !writingPageTask.IsActive;
+                form.OpenProgramFile = () => {
+                    if (isStreaming || writingPageTask.IsActive) throw new InvalidOperationException("请先结束当前书写任务。");
+                    using (var picker = new OpenFileDialog { Filter = "G代码程序|*.nc;*.cnc;*.ngc;*.gcode;*.tap" })
+                        if (picker.ShowDialog(this) == DialogResult.OK && LoadFile(picker.FileName) && modernShellActive) SwitchCenterPage(false);
+                };
+                form.OpenTextWizard = text =>
+                {
+                    if (isStreaming || writingPageTask.IsActive)
+                        throw new InvalidOperationException("书写任务进行中，请先结束任务再使用文本转换窗口。");
+                    TextWizzardToolStripMenuItem_Click(this, EventArgs.Empty);
+                    _text_form.SetText(text, false);
+                    _text_form.Activate();
+                };
                 try { AutoWriter.Ui.UiTheme.ApplyDialogSkin(form, false); } catch { /* cosmetic only */ }
                 form.FormClosed += (sender, args) =>
                 {

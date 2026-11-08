@@ -157,10 +157,10 @@ namespace GrblPlotter
             ShowTextSize();
         }
 
-        internal void SetText(string tmp)
+        internal void SetText(string tmp, bool create = true)
         {
             tBText.Text = tmp;
-            btnApply.PerformClick();
+            if (create) btnApply.PerformClick();
         }
 
         /*********************************************************************/

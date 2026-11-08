@@ -4,6 +4,7 @@ using System.Drawing;
 using System.Globalization;
 using System.IO;
 using System.Text;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using GrblPlotter.AutoWriter.Models;
@@ -16,7 +17,7 @@ namespace GrblPlotter.AutoWriter
     {
         private readonly MachineProfileService profiles = new MachineProfileService();
         private readonly PropertyGrid properties = new PropertyGrid { Dock = DockStyle.Fill };
-        private readonly Label status = new Label { Dock = DockStyle.Bottom, Height = 46, AutoEllipsis = true };
+        private readonly Label status = new Label { Dock = DockStyle.Bottom, Height = 34, AutoEllipsis = true };
         private readonly Dictionary<string, TextBox> inputs = new Dictionary<string, TextBox>();
         private readonly Dictionary<string, TextBox> overrides = new Dictionary<string, TextBox>();
         private readonly TextBox result = new TextBox { Multiline = true, ReadOnly = true, Dock = DockStyle.Bottom, Height = 92 };
@@ -38,6 +39,81 @@ namespace GrblPlotter.AutoWriter
         // Multi-character input (stage 2, §11.2-1): one string -> one continuous program.
         // Empty falls back to the built-in sample strokes so the old checks keep working.
         private TextBox writingInputText;
+        private List<PageDrawing> drawings = new List<PageDrawing>();
+        internal Func<bool> CanEditPaper { get; set; }
+        private bool editingPaper;
+        private string previewTextOverride, anchorSourceText, previewAnchorText;
+        private Dictionary<string,string> AnnotationFontChoices()
+        {
+            var choices=new Dictionary<string,string>{{"内置示例笔画字库",""}};
+            for(int i=0;i<fontPackPaths.Count;i++){string name=fontSelector.Items.Count>i+1?fontSelector.Items[i+1].ToString():Path.GetFileName(fontPackPaths[i]);if(choices.ContainsKey(name))name+=" ["+(i+1)+"]";choices[name]=Path.GetFullPath(fontPackPaths[i]);}
+            return choices;
+        }
+        private AnnotationTextStyle DefaultAnnotationStyle()
+        {
+            var sheet=ReadPage();double size=LayoutValue(fontSizeInput,"字号");
+            if(sheet.LinesPerPage>0&&sheet.FontHeightPercent>0)size=(sheet.HeightMm-sheet.TopMm-sheet.BottomMm)/sheet.LinesPerPage*sheet.FontHeightPercent/100;
+            return new AnnotationTextStyle{FontPath=fontSelector.SelectedIndex>0?Path.GetFullPath(fontPackPaths[fontSelector.SelectedIndex-1]):"",SizeMm=size,LetterGapMm=LayoutValue(letterSpacingInput,"字距"),LineGapMm=LayoutValue(lineSpacingInput,"行距")};
+        }
+        private List<double[]> BuildAnnotationPaths(string text,AnnotationTextStyle style)
+        {
+            style.Validate();Func<char,BuiltinGlyph> resolver=BuiltinGlyphLibrary.Resolve;
+            if(!string.IsNullOrEmpty(style.FontPath)){style.FontPath=Path.GetFullPath(style.FontPath);var pack=GlyphFontPack.LoadFromFile(style.FontPath);resolver=pack.ToResolver();style.FontSha256=WritingProjectService.Fingerprint(style.FontPath);}
+            else style.FontSha256="";
+            var strokes=TextLayoutService.Layout(WritingEditorText.Normalize(text),resolver,style.LetterGapMm,style.LineGapMm,12,style.SizeMm/BuiltinGlyphLibrary.BodySizeMm);
+            double minX=double.MaxValue,maxY=double.MinValue;foreach(var stroke in strokes)foreach(var point in stroke.Points){minX=Math.Min(minX,point.X);maxY=Math.Max(maxY,point.Y);}
+            var output=new List<double[]>();foreach(var stroke in strokes){var path=new List<double>();foreach(var point in stroke.Points){path.Add(point.X-minX);path.Add(maxY-point.Y);}output.Add(path.ToArray());}return output;
+        }
+        private void EditPaper()
+        {
+            Execute(() => {
+                if (CanEditPaper != null && !CanEditPaper()) throw new InvalidOperationException("书写进行中，暂不能编辑纸面。");
+                if (!pageEnabled.Checked) throw new InvalidOperationException("请先开启自动分页。");
+                if (pageTask != null && pageTask.IsActive) throw new InvalidOperationException("请先结束书写任务。");
+                IList<WritingLayoutPage> pages;
+                editingPaper = true;
+                try { pages = LayoutAllPages(); } finally { editingPaper = false; }
+                var currentBody=WritingEditorText.Normalize(writingInputText.Text);
+                var editorObjects=DrawingAnchors.Resolve(DrawingAnchors.Remap(anchorSourceText??currentBody,currentBody,drawings),pages);
+                using (var editor = new PaperEditor(pages, ReadPage(), editorObjects, text => {
+                    var strokes = TextLayoutService.Layout(text, ChainResolver(), LayoutValue(letterSpacingInput,"字距"), LayoutValue(lineSpacingInput,"行距"),12,LayoutValue(fontSizeInput,"字号")/BuiltinGlyphLibrary.BodySizeMm);
+                    double minX=double.MaxValue,maxY=double.MinValue;
+                    foreach(var s in strokes)foreach(var p in s.Points){minX=Math.Min(minX,p.X);maxY=Math.Max(maxY,p.Y);}
+                    var result=new List<double[]>();foreach(var s in strokes){var path=new List<double>();foreach(var p in s.Points){path.Add(p.X-minX);path.Add(maxY-p.Y);}result.Add(path.ToArray());}return result;
+                }) { AnnotationDefaults=DefaultAnnotationStyle(), AnnotationFonts=AnnotationFontChoices(),StyledTextPaths=BuildAnnotationPaths,BodyText=currentBody, BodyEditable=!regionsEnabled.Checked, AllowReserve = !regionsEnabled.Checked, ReflowText = (candidate,items) => {
+                    var saved=drawings;bool previous=editingPaper;var savedText=previewTextOverride;var savedAnchor=previewAnchorText;
+                    try { drawings=items;previewTextOverride=candidate;previewAnchorText=candidate;editingPaper=true;return LayoutAllPages(); }
+                    finally { drawings=saved;previewTextOverride=savedText;previewAnchorText=savedAnchor;editingPaper=previous; }
+                }, Reflow = items => {
+                    var saved=drawings;bool previous=editingPaper;
+                    try { drawings=items;editingPaper=true;return LayoutAllPages(); }
+                    finally { drawings=saved;editingPaper=previous; }
+                } }) if (editor.ShowDialog(DialogOwner)==DialogResult.OK) { drawings=editor.Result;anchorSourceText=editor.BodyText;writingInputText.Text=editor.BodyText;ProjectDirty=true;InvalidateWriting();status.Text="纸面编辑已应用，请重新生成预览。"; }
+            });
+        }
+        internal Action<string> OpenTextWizard { get; set; }
+        internal Action OpenProgramFile { get; set; }
+        internal string ProjectFilePath { get; private set; }
+        internal bool ProjectDirty { get; private set; }
+        internal void ImportSourceFromShell(string fileName)
+        {
+            Execute(() => {
+                string text = Path.GetExtension(fileName).Equals(".pdf", StringComparison.OrdinalIgnoreCase)
+                    ? WritingPdfService.ImportText(fileName) : File.ReadAllText(fileName, new UTF8Encoding(false, true));
+                if (MessageBox.Show(DialogOwner, "将用导入的文字替换当前正文，是否继续？", "导入文字", MessageBoxButtons.OKCancel) != DialogResult.OK) return;
+                writingInputText.Text = WritingEditorText.Normalize(text); regionsEnabled.Checked = false;
+            });
+        }
+        private void ImportTextOrPdf()
+        {
+            using (var dialog = new OpenFileDialog { Filter = "文字或PDF|*.txt;*.pdf|UTF-8文本|*.txt|PDF|*.pdf" })
+                if (dialog.ShowDialog(DialogOwner) == DialogResult.OK) ImportSourceFromShell(dialog.FileName);
+        }
+        internal void SaveProjectFromShell() { SaveWritingProject(); }
+        internal void NewProjectFromShell() { writingInputText.Clear(); regions.Clear(); drawings.Clear(); regionsEnabled.Checked = false; ProjectFilePath = null; InvalidateWriting(); }
+        private Panel externalEditorButtons;
+        private List<ExternalTextEditor> externalEditors;
+        private string externalTextFile, externalTextOriginal;
         private TextBox letterSpacingInput;
         private TextBox lineSpacingInput;
         // Font size = glyph body height in mm; empty keeps the native 10 mm body (scale 1.0).
@@ -50,6 +126,7 @@ namespace GrblPlotter.AutoWriter
         private NumericUpDown regionPageSelector;
         private Label regionPageTotal;
         private Label pageTotal;
+        private Label rowLayoutSummary;
         private IList<WritingLayoutPage> writingPages;
         private bool updatingPage;
         private CheckBox regionsEnabled;
@@ -118,7 +195,7 @@ namespace GrblPlotter.AutoWriter
             this.markLoadedStale = markLoadedStale;
             this.importGraphic = importGraphic;
             Text = "AutoWriter " + AutoWriterBuild.Version + " — 机器配置与校准";
-            Font = new Font("Microsoft YaHei UI", 9F);
+            Font = UiTheme.SafeFont(9f);   // same fallback chain as the rest of the shell
             AutoScaleMode = AutoScaleMode.Font;
             Size = new Size(840, 670);
             MinimumSize = new Size(700, 560);
@@ -219,6 +296,18 @@ namespace GrblPlotter.AutoWriter
             };
             groupContent.AddWide(writingInputText, 58);
             groupContent.NewRow();
+            groupContent.AddButton("从文本创建G代码", () => Execute(() => {
+                if (OpenTextWizard == null) throw new InvalidOperationException("请从主界面打开写字设置。");
+                OpenTextWizard(WritingEditorText.Normalize(writingInputText.Text));
+            }));
+            groupContent.Note("外部编辑器");
+            externalEditorButtons = new Panel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Dock = DockStyle.Top };
+            groupContent.AddContent(externalEditorButtons);
+            RefreshExternalEditorButtons();
+            groupContent.NewRow();
+            groupContent.AddButton("配置外部编辑器", ConfigureExternalEditors);
+            groupContent.AddButton("载入外部修改", ReloadExternalText);
+            groupContent.NewRow();
             groupContent.AddLabel("字体");
             groupContent.NewRow();
             fontSelector = new ScrollableFontComboBox
@@ -253,6 +342,17 @@ namespace GrblPlotter.AutoWriter
             groupPage.NewRow();
             pageFields.Add("上", PageField(groupPage, "上", "10", 40));
             pageFields.Add("下", PageField(groupPage, "下", "10", 40));
+            groupPage.NewRow();
+            pageFields.Add("行数", PageField(groupPage, "每页行数", "0", 46));
+            pageFields.Add("字高比例", PageField(groupPage, "字高%", "0", 46));
+            groupPage.NewRow();
+            pageFields.Add("旋转", PageField(groupPage, "笔迹旋转°", "0", 46));
+            groupPage.NewRow();
+            rowLayoutSummary = new Label { AutoSize = false, ForeColor = UiTheme.SubText };
+            groupPage.AddWide(rowLayoutSummary, 42);
+            groupPage.Note("行数 0 = 手动行距；字高% 0 = 毫米字号。旋转支持 0/90/180/270，围绕纸张中心，超出纸面会拒绝生成。多区域按各区域字号排版。");
+            foreach (TextBox field in pageFields.Values) field.TextChanged += (s, e) => RefreshRowLayout();
+            fontSizeInput.TextChanged += (s, e) => RefreshRowLayout();
             groupPage.NewRow();
             pageEnabled = groupPage.AddCheck("自动分页（纸张左上角=工作原点）", true);
             groupPage.NewRow();
@@ -302,17 +402,26 @@ namespace GrblPlotter.AutoWriter
             AddOverride(groupSpeed, "空移", "travel");
 
             // ---- 5. 生成与项目 ----
-            var groupRun = new UiGroup("生成与项目");
+            var editGroup = new UiGroup("纸面编辑");
+            editGroup.AddButton("编辑纸面（绘画／批注）", EditPaper, UiButtonKind.Primary);
+            groups.Add(editGroup);
+            var projectGroup = new UiGroup("写字项目");
+            projectGroup.AddButton("打开项目", OpenWritingProject);
+            projectGroup.AddButton("保存项目", SaveWritingProject);
+            projectGroup.NewRow();
+            projectGroup.AddButton("导入文字／PDF", ImportTextOrPdf);
+            projectGroup.AddButton("导出PDF", ExportWritingPdf);
+            groups.Add(projectGroup);
+            var groupRun = new UiGroup("生成与运行");
             groups.Add(groupRun);
             groupRun.AddButton("生成写字预览", GenerateWritingPreview, UiButtonKind.Primary);
             groupRun.AddButton("生成并载入主界面预览", LoadWritingIntoMainPreview, UiButtonKind.Primary);
             groupRun.NewRow();
             groupRun.AddButton("刷新应用报告", RefreshApplyReport);
             groupRun.AddButton("检查连续排队", CheckContinuousQueue);
-            groupRun.AddButton("导出写字程序", ExportWritingProgram);
             groupRun.NewRow();
-            groupRun.AddButton("保存写字项目", SaveWritingProject);
-            groupRun.AddButton("打开写字项目", OpenWritingProject);
+            groupRun.AddButton("打开G代码", () => Execute(() => OpenProgramFile?.Invoke()));
+            groupRun.AddButton("导出G代码", ExportWritingProgram);
 
             // Cards dock from the highest child index downwards, so add them bottom-first.
             for (int index = groups.Count - 1; index >= 0; index--)
@@ -344,12 +453,12 @@ namespace GrblPlotter.AutoWriter
 
             BuildRegionTab(tabs, applyTab);
             Controls.Add(tabs);
-            var taskBar = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 40, WrapContents = false,
-                Padding = new Padding(10, 5, 6, 0), BackColor = UiTheme.Background };
+            var taskBar = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 36, WrapContents = false,
+                Padding = new Padding(10, 3, 6, 0), BackColor = UiTheme.Background };
             pageTaskStatus = new Label { AutoSize = true, Text = pageTask == null ? "写字任务：未连接主界面" : pageTask.StatusText,
-                Padding = new Padding(0, 6, 8, 0), ForeColor = UiTheme.SubText };
+                Padding = new Padding(0, 5, 8, 0), ForeColor = UiTheme.SubText };
             taskBar.Controls.Add(pageTaskStatus);
-            UiTheme.AddButton(taskBar, "冻结多页任务", FreezePageTask);
+            UiTheme.AddButton(taskBar, "冻结多页任务", FreezePageTask, UiButtonKind.Normal, 30);   // same height as the confirm button beside it
             confirmPaperButton = new Button { Text = "已换纸并确认位置", AutoSize = true, Height = 30, Enabled = false };
             confirmPaperButton.Click += (sender, args) => ConfirmPaperFromSetup();
             UiTheme.StyleFlatButton(confirmPaperButton, UiButtonKind.Success);
@@ -371,10 +480,9 @@ namespace GrblPlotter.AutoWriter
             toolbar.NewRow();
             toolbar.AddButton("保存配置", SaveProfile, UiButtonKind.Primary);
             toolbar.Note("空值表示尚未验证。配置保存不会连接机器或写入固件。");
-            var help = new UiGroup("配置说明");
-            help.Note("在右侧展开 AxisMapping / Speeds / Delays / Capabilities 设置参数。截图数值只能记录为候选。");
-            help.Note("读取实机：用 --inspect-machine 启动，再手动连接；该模式只允许查询。");
-            machineColumn.Controls.Add(help.Card);
+            // the usage notes live in the same card now - two tiny cards left the column mostly empty
+            toolbar.Note("在右侧展开 AxisMapping / Speeds / Delays / Capabilities 设置参数。截图数值只能记录为候选。");
+            toolbar.Note("读取实机：用 --inspect-machine 启动，再手动连接；该模式只允许查询。");
             machineColumn.Controls.Add(toolbar.Card);
             machineDetail.Controls.Add(properties);
             machineDetail.Controls.Add(PreviewHeader("机器参数"));
@@ -401,6 +509,9 @@ namespace GrblPlotter.AutoWriter
             AddCalibrationField(measured, "commanded", "指令距离（mm）", "");
             AddCalibrationField(measured, "measured", "实测距离（mm）", "");
             measured.AddButton("实测修正", () => Execute(() => result.Text = "修正步数/mm：" + MotionCalibrationService.CorrectMeasuredStepsPerMm(Value("old"), Value("commanded"), Value("measured")).ToString("G12", CultureInfo.InvariantCulture)));
+            // rarely used groups start folded so the program card fits the first screen
+            gear.SetCollapsible(true);
+            measured.SetCollapsible(true);
             foreach (var group in new[] { programButtons, measured, gear, belt, motor })
                 calibrationColumn.Controls.Add(group.Card);
             var previews = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal,
@@ -415,6 +526,9 @@ namespace GrblPlotter.AutoWriter
             calibrationDetail.Controls.Add(previews);
             ApplySplitDistanceWhenLaidOut(previews, () => Math.Max(25, previews.Height / 3));
             NewProfile();            RestoreLastState();
+            foreach (var box in StateTextFields().Values) box.TextChanged += (s, e) => ProjectDirty = true;
+            foreach (var box in StateChecks().Values) box.CheckedChanged += (s, e) => ProjectDirty = true;
+            fontSelector.SelectedIndexChanged += (s, e) => ProjectDirty = true;
             tabs.ResumeLayout(false);
             ResumeLayout(false);
         }
@@ -581,7 +695,17 @@ namespace GrblPlotter.AutoWriter
             grid.CheckedChanged += (sender, args) => { if (regionCanvas != null) { regionCanvas.ShowGrid = grid.Checked; regionCanvas.Invalidate(); } };
 
             // ---- 7. 生成与项目 ----
-            var groupRun = new UiGroup("生成与项目");
+            var editGroup = new UiGroup("纸面编辑");
+            editGroup.AddButton("编辑纸面（绘画／批注）", EditPaper, UiButtonKind.Primary);
+            groups.Add(editGroup);
+            var projectGroup = new UiGroup("写字项目");
+            projectGroup.AddButton("打开项目", OpenWritingProject);
+            projectGroup.AddButton("保存项目", SaveWritingProject);
+            projectGroup.NewRow();
+            projectGroup.AddButton("导入文字／PDF", ImportTextOrPdf);
+            projectGroup.AddButton("导出PDF", ExportWritingPdf);
+            groups.Add(projectGroup);
+            var groupRun = new UiGroup("生成与运行");
             groups.Add(groupRun);
             groupRun.AddButton("区域笔迹预览", () => Execute(() => {
                 InvalidateWriting();
@@ -591,8 +715,8 @@ namespace GrblPlotter.AutoWriter
             groupRun.NewRow();
             groupRun.AddButton("生成并载入主界面预览", LoadWritingIntoMainPreview);
             groupRun.NewRow();
-            groupRun.AddButton("保存写字项目", SaveWritingProject);
-            groupRun.AddButton("打开写字项目", OpenWritingProject);
+            groupRun.AddButton("打开G代码", () => Execute(() => OpenProgramFile?.Invoke()));
+            groupRun.AddButton("导出G代码", ExportWritingProgram);
 
             // Cards dock from the highest child index downwards, so add them bottom-first.
             for (int index = groups.Count - 1; index >= 0; index--)
@@ -639,6 +763,9 @@ namespace GrblPlotter.AutoWriter
                     string[] keys = { "宽", "高", "左", "右", "上", "下" };
                     for (int i=0;i<keys.Length;i++) pageFields[keys[i]].Text=Number(values[i]);
                     autoWrap.Checked=template.Sheet.AutoWrap; pageEnabled.Checked=true;
+                    pageFields["行数"].Text = template.Sheet.LinesPerPage.ToString(CultureInfo.InvariantCulture);
+                    pageFields["字高比例"].Text = Number(template.Sheet.FontHeightPercent);
+                    pageFields["旋转"].Text = template.Sheet.RotationDegrees.ToString(CultureInfo.InvariantCulture);
                     RememberRegions();
                     regions=updated; regionCanvas.Regions=regions; regionCanvas.Selected=-1;
                     regionsEnabled.Checked=true; pageSelector.Value=1;
@@ -812,6 +939,12 @@ namespace GrblPlotter.AutoWriter
             foreach (var pair in StateChecks()) state.Checks.Add(pair.Key, pair.Value.Checked);
             state.Text["selectedPage"] = pageSelector.Value.ToString(CultureInfo.InvariantCulture);
             state.Text["supplement"] = supplementPath ?? "";
+            state.Drawings = drawings.ConvertAll(d => d.Clone());
+            state.AnchorSourceText=anchorSourceText;
+            if (drawings.Exists(d => d.Kind == "Reserve")) state.Version = 2;
+            if(drawings.Exists(d=>d.HasAnchor||d.Kind=="Wrap"))state.Version=3;
+            if(drawings.Exists(d=>d.TextStyle!=null))state.Version=4;
+            if(drawings.Exists(d=>PaperScene.IsContainer(d)||d.Kind=="Slot"||d.Hidden||d.Locked||d.LayerId!=null||d.GroupId!=null||d.SectionId!=null))state.Version=5;
             lastState.Save(state);
         }
         private void RestoreLastState()
@@ -826,6 +959,8 @@ namespace GrblPlotter.AutoWriter
             var state = lastState.Load(out warning);
             if (state != null)
             {
+                drawings = state.Drawings ?? new List<PageDrawing>();
+                anchorSourceText=state.AnchorSourceText;
                 regions = state.Regions ?? new List<WritingRegion>(); regionCanvas.Regions = regions;
                 profile = state.Profile; properties.SelectedObject = profile;
                 foreach (var pair in StateTextFields()) { string value; if (state.Text.TryGetValue(pair.Key, out value)) pair.Value.Text = pair.Key == "text" ? WritingEditorText.Normalize(value) : value; }
@@ -1009,11 +1144,20 @@ namespace GrblPlotter.AutoWriter
         {
             if (regionsEnabled.Checked)
             {
+                if (!editingPaper && drawings.Exists(d => d.Kind == "Reserve" || d.Kind=="Wrap" || d.HasAnchor)) throw new InvalidOperationException("预留绘图区目前适用于普通正文；多区域模式请删除预留区并调整区域文字框。");
                 return FinishPages(RegionLayoutService.LayoutPages(regions, ReadPage(), ChainResolver(), ResolverFor));
             }
-            string text = writingInputText == null ? "" : WritingEditorText.Normalize(writingInputText.Text);
+            string text = previewTextOverride ?? (writingInputText == null ? "" : WritingEditorText.Normalize(writingInputText.Text));
             if (text.Length == 0)
+            {
+                if (editingPaper || drawings.Count > 0) {
+                    int count = 1; foreach(var d in drawings) count = Math.Max(count, d.Page);
+                    var blank = new List<WritingLayoutPage>();
+                    for(int i=0;i<count;i++) blank.Add(new WritingLayoutPage { PageNumber=i+1,Strokes=new List<WritingStroke>() });
+                    return FinishPages(blank);
+                }
                 return FinishPages(new[] { new WritingLayoutPage { Strokes = SampleStrokes(), PageNumber = 1 } });
+            }
             double sizeMm = LayoutValue(fontSizeInput, "字号");
             if (sizeMm <= 0)
                 throw new ArgumentException("字号必须大于 0（字身高度 mm，小数点使用 . ）：" + fontSizeInput.Text);
@@ -1041,6 +1185,13 @@ namespace GrblPlotter.AutoWriter
             int rows = GridCount(gridRowsInput), columns = GridCount(gridColumnsInput);
             if (drawGridLines != null && drawGridLines.Checked && rows > 0 && columns > 0)
                 pages = WritingGridService.WithLines(pages, WritingGridService.Lines(ReadPage(), rows, columns));
+            if (!editingPaper) {
+                string current=previewTextOverride??WritingEditorText.Normalize(writingInputText.Text);
+                var mapped=DrawingAnchors.Remap(previewAnchorText??anchorSourceText??current,current,drawings);
+                PageDrawing.Apply(pages,DrawingAnchors.Resolve(mapped,pages),ReadPage());
+            }
+            if (pageEnabled.Checked && !editingPaper) pages = TextLayoutService.RotatePages(pages, ReadPage());
+            else if (!pageEnabled.Checked && ReadPage().RotationDegrees != 0) throw new ArgumentException("笔迹旋转需要启用自动分页以确定纸张中心。");
             return pages;
         }
         private static int GridCount(TextBox box)
@@ -1050,6 +1201,88 @@ namespace GrblPlotter.AutoWriter
             if (!int.TryParse(box.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out value) || value < 0 || value > 40)
                 throw new ArgumentException("表格行列必须是 0 到 40 的整数。0 表示不用表格。");
             return value;
+        }
+        private void RefreshExternalEditorButtons()
+        {
+            while (externalEditorButtons.Controls.Count > 0) externalEditorButtons.Controls[0].Dispose();
+            try { externalEditors = ExternalTextEditor.Load() ?? new List<ExternalTextEditor>(); }
+            catch (Exception error) { externalEditors = new List<ExternalTextEditor>(); status.Text = "外部编辑器配置无法读取：" + error.Message; }
+            for (int index = 0; index < externalEditors.Count; index += 2)
+            {
+                var row = new UiRow(UiTheme.RowHeight);
+                for (int item = index; item < Math.Min(index + 2, externalEditors.Count); item++)
+                {
+                    var selected = externalEditors[item];
+                    var button = UiTheme.MakeButton("用" + selected.Name + "打开", () => OpenExternalText(selected), UiButtonKind.Normal);
+                    row.Place(button, 0);
+                }
+                UiTheme.StackBody(externalEditorButtons, row, UiTheme.RowGap);
+            }
+        }
+        private void ConfigureExternalEditors()
+        {
+            using (var dialog = new Form { Text = "外部文本编辑器", Width = 850, Height = 440,
+                StartPosition = FormStartPosition.CenterParent })
+            {
+                var rows = new System.ComponentModel.BindingList<ExternalTextEditor>();
+                foreach (var editor in externalEditors) rows.Add(new ExternalTextEditor { Name = editor.Name, Program = editor.Program, Arguments = editor.Arguments });
+                var grid = new DataGridView { Dock = DockStyle.Fill, AutoGenerateColumns = false,
+                    AllowUserToAddRows = true, AllowUserToDeleteRows = true, DataSource = rows,
+                    AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill };
+                grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "显示名称", DataPropertyName = "Name", FillWeight = 25 });
+                grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "程序路径或命令", DataPropertyName = "Program", FillWeight = 45 });
+                grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "启动参数", DataPropertyName = "Arguments", FillWeight = 30 });
+                var note = new Label { Dock = DockStyle.Top, Height = 48,
+                    Text = "每行对应一个按钮，可增删。程序路径无需加引号；参数中的 {file} 会替换成文本文件路径，缺省时自动追加。\n例如 VS Code：Code.exe 或 code.cmd；Neovim：nvim.exe；记事本：notepad.exe。" };
+                var bar = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 40 };
+                var browse = new Button { Text = "选择程序…", AutoSize = true };
+                browse.Click += (s, e) => {
+                    using (var picker = new OpenFileDialog { Filter = "程序|*.exe;*.cmd;*.bat|所有文件|*.*" })
+                        if (picker.ShowDialog(dialog) == DialogResult.OK) {
+                            grid.EndEdit();
+                            int index = grid.CurrentRow == null ? -1 : grid.CurrentRow.Index;
+                            if (index < 0 || index >= rows.Count) { rows.Add(new ExternalTextEditor { Name = Path.GetFileNameWithoutExtension(picker.FileName), Arguments = "{file}" }); index = rows.Count - 1; }
+                            rows[index].Program = picker.FileName; rows.ResetBindings();
+                        }
+                };
+                var save = new Button { Text = "保存", AutoSize = true };
+                save.Click += (s, e) => {
+                    try { grid.EndEdit();
+                        dialog.BindingContext[rows].EndCurrentEdit();
+                        ExternalTextEditor.Save(new List<ExternalTextEditor>(rows)); dialog.DialogResult = DialogResult.OK; }
+                    catch (Exception error) { MessageBox.Show(dialog, error.Message, "编辑器配置"); }
+                };
+                bar.Controls.Add(browse); bar.Controls.Add(save);
+                dialog.Controls.Add(grid); dialog.Controls.Add(note); dialog.Controls.Add(bar);
+                if (dialog.ShowDialog(DialogOwner) == DialogResult.OK) RefreshExternalEditorButtons();
+            }
+        }
+        private void OpenExternalText(ExternalTextEditor editor)
+        {
+            Execute(() => {
+                string folder = Path.Combine(Path.GetTempPath(), "AutoWriter", "ExternalText");
+                Directory.CreateDirectory(folder);
+                string file = Path.Combine(folder, "writing-" + Guid.NewGuid().ToString("N") + ".txt");
+                string text = WritingEditorText.Normalize(writingInputText.Text);
+                File.WriteAllText(file, text, new UTF8Encoding(false));
+                try {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo {
+                        FileName = editor.Program, Arguments = editor.BuildArguments(file), UseShellExecute = true });
+                } catch (Exception error) { throw new InvalidOperationException("无法打开“" + editor.Name + "”。请在“配置外部编辑器”中选择已安装的程序。\n" + error.Message); }
+                externalTextFile = file; externalTextOriginal = text;
+                status.Text = "已用" + editor.Name + "打开。外部保存后，点击“载入外部修改”同步正文。";
+            });
+        }
+        private void ReloadExternalText()
+        {
+            Execute(() => {
+                if (externalTextFile == null) throw new InvalidOperationException("请先点击一个外部编辑器按钮打开当前文本。");
+                string text = WritingEditorText.Normalize(File.ReadAllText(externalTextFile, new UTF8Encoding(false, true)));
+                if (WritingEditorText.Normalize(writingInputText.Text) != externalTextOriginal &&
+                    MessageBox.Show(DialogOwner, "软件中的正文也已修改。是否用外部文件替换？", "载入外部修改", MessageBoxButtons.OKCancel) != DialogResult.OK) return;
+                writingInputText.Text = text; externalTextOriginal = text;
+                status.Text = "已载入外部保存的文字，请重新生成预览。";
+            });
         }
         private void ImportWritingText()
         {
@@ -1151,16 +1384,52 @@ namespace GrblPlotter.AutoWriter
             startAtOrigin.Enabled = !pageEnabled.Checked;
             if (pageEnabled.Checked) startAtOrigin.Checked = false;
             foreach (TextBox box in pageFields.Values) box.Enabled = pageEnabled.Checked;
+            pageFields["行数"].Enabled = pageEnabled.Checked && !multi;
+            pageFields["字高比例"].Enabled = pageEnabled.Checked && !multi;
             autoWrap.Enabled = pageEnabled.Checked;
             if (pageSelector != null) pageSelector.Enabled = pageEnabled.Checked;
             if (regionPageSelector != null) regionPageSelector.Enabled = multi;
             pageEnabled.Enabled = !multi;
+            RefreshRowLayout();
+        }
+        private void RefreshRowLayout()
+        {
+            if (rowLayoutSummary == null || !pageFields.ContainsKey("行数")) return;
+            bool fixedRows = pageEnabled != null && pageEnabled.Checked && (regionsEnabled == null || !regionsEnabled.Checked)
+                && pageFields["行数"].Text.Trim() != "0";
+            lineSpacingInput.Enabled = !fixedRows;
+            fontSizeInput.Enabled = !(fixedRows && pageFields["字高比例"].Text.Trim() != "0");
+            try
+            {
+                var page = ReadPage();
+                if (regionsEnabled != null && regionsEnabled.Checked) { rowLayoutSummary.Text = "多区域使用各区域自己的字号与行距"; return; }
+                if (!fixedRows || page.LinesPerPage == 0) { rowLayoutSummary.Text = "按手动行距排版"; return; }
+                double slot = (page.HeightMm - page.TopMm - page.BottomMm) / page.LinesPerPage;
+                double body = page.FontHeightPercent > 0 ? slot * page.FontHeightPercent / 100 : LayoutValue(fontSizeInput, "字号");
+                rowLayoutSummary.Text = string.Format(CultureInfo.InvariantCulture, "每页 {0} 行 · 行槽/行步距 {1:0.###} mm\n字框高 {2:0.###} mm · 字框间隔 {3:0.###} mm", page.LinesPerPage, slot, body, slot - body);
+            }
+            catch (Exception error) { rowLayoutSummary.Text = error.Message; }
         }
         private PageLayoutOptions ReadPage()
         {
             var page = new PageLayoutOptions { WidthMm = LayoutValue(pageFields["宽"], "纸宽"), HeightMm = LayoutValue(pageFields["高"], "纸高"),
                 LeftMm = LayoutValue(pageFields["左"], "左边距"), RightMm = LayoutValue(pageFields["右"], "右边距"),
                 TopMm = LayoutValue(pageFields["上"], "上边距"), BottomMm = LayoutValue(pageFields["下"], "下边距"), AutoWrap = autoWrap.Checked };
+            string slotText=DrawingAnchors.Canonical(previewTextOverride??writingInputText.Text);
+            page.BlankGlyphs=PaperScene.Slots(DrawingAnchors.Remap(previewAnchorText??anchorSourceText??slotText,slotText,drawings.Where(d=>d.Kind=="Slot")),slotText);
+            double lines = LayoutValue(pageFields["行数"], "每页行数");
+            if (lines != Math.Truncate(lines) || lines < 0 || lines > 1000) throw new ArgumentException("每页行数必须为 0 到 1000 的整数。");
+            page.LinesPerPage = (int)lines;
+            page.FontHeightPercent = LayoutValue(pageFields["字高比例"], "字高百分比");
+            double rotation = LayoutValue(pageFields["旋转"], "笔迹旋转");
+            if (rotation != Math.Truncate(rotation) || rotation < 0 || rotation > 270) throw new ArgumentException("笔迹旋转必须为 0/90/180/270。");
+            page.RotationDegrees = (int)rotation;
+            if (regionsEnabled == null || !regionsEnabled.Checked) {
+                page.ReservedAreas = new List<PageReservedArea>();
+                page.WrapAreas = new List<TextWrapArea>();
+                foreach(var d in drawings) if(d.Kind=="Reserve"&&PaperScene.Visible(d,drawings)) { var b=d.Bounds();page.ReservedAreas.Add(new PageReservedArea{Page=d.Page,TopMm=b.Top,HeightMm=b.Height}); }
+            }
+            if(regionsEnabled==null||!regionsEnabled.Checked)foreach(var d in drawings)if(d.Kind=="Wrap"&&PaperScene.Visible(d,drawings)){var b=d.Bounds();page.WrapAreas.Add(new TextWrapArea{Page=d.Page,Left=b.Left,Top=b.Top,Width=Math.Max(.1,b.Width),Height=Math.Max(.1,b.Height)});}
             page.Validate(); return page;
         }
         private WritingProject CaptureProject()
@@ -1181,6 +1450,14 @@ namespace GrblPlotter.AutoWriter
                 DrawGridLines = drawGridLines != null && drawGridLines.Checked, GridRows = GridCount(gridRowsInput), GridColumns = GridCount(gridColumnsInput) };
             foreach (WritingRegion region in project.Regions)
                 if (region != null && !string.IsNullOrEmpty(region.FontPath)) region.FontSha256 = WritingProjectService.Fingerprint(region.FontPath);
+            string currentBody=WritingEditorText.Normalize(writingInputText.Text);
+            project.Drawings = DrawingAnchors.Remap(anchorSourceText??currentBody,currentBody,drawings);
+            project.AnchorSourceText = currentBody;
+            if (drawings.Count > 0) project.Version = 2;
+            if (drawings.Exists(d => d.Kind == "Reserve")) project.Version = 3;
+            if(drawings.Exists(d=>d.HasAnchor||d.Kind=="Wrap"))project.Version=4;
+            if(drawings.Exists(d=>d.TextStyle!=null))project.Version=5;
+            if(drawings.Exists(d=>PaperScene.IsContainer(d)||d.Kind=="Slot"||d.Hidden||d.Locked||d.LayerId!=null||d.GroupId!=null||d.SectionId!=null))project.Version=6;
             project.Validate(); return project;
         }
         private void SaveWritingProject()
@@ -1188,14 +1465,45 @@ namespace GrblPlotter.AutoWriter
             Execute(() => {
                 WritingProject project = CaptureProject();
                 using (var dialog = new SaveFileDialog { Filter = "写字项目 (*.awproject)|*.awproject", DefaultExt = "awproject", FileName = "writing.awproject" })
-                    if (dialog.ShowDialog(DialogOwner) == DialogResult.OK) { WritingProjectService.Save(dialog.FileName, project); status.Text = "已保存写字项目；机器配置另行保存，覆盖时保留备份。"; }
+                    if (dialog.ShowDialog(DialogOwner) == DialogResult.OK) { WritingProjectService.Save(dialog.FileName, project); ProjectFilePath = dialog.FileName; ProjectDirty = false; status.Text = "已保存写字项目；机器配置另行保存，覆盖时保留备份。"; }
+            });
+        }
+        private void ImportPdfText()
+        {
+            using (var dialog = new OpenFileDialog { Filter = "PDF 文档 (*.pdf)|*.pdf" })
+                if (dialog.ShowDialog(DialogOwner) == DialogResult.OK) Execute(() =>
+                {
+                    string text = WritingEditorText.Normalize(WritingPdfService.ImportText(dialog.FileName));
+                    if (MessageBox.Show(DialogOwner, "将用 PDF 提取的文字替换正文，并按当前纸张和字体重新排版。图片与原版式不会导入。是否继续？",
+                        "导入 PDF 文字", MessageBoxButtons.OKCancel) != DialogResult.OK) return;
+                    writingInputText.Text = text;
+                    regionsEnabled.Checked = false;
+                    status.Text = "PDF 文字已导入。请检查阅读顺序与缺字，再生成预览。";
+                });
+        }
+        private void ExportWritingPdf()
+        {
+            Execute(() =>
+            {
+                if (!pageEnabled.Checked) throw new InvalidOperationException("导出 PDF 需要启用自动分页，以确定纸张尺寸。");
+                var pages = LayoutAllPages();
+                using (var dialog = new SaveFileDialog { Filter = "笔迹 PDF (*.pdf)|*.pdf", DefaultExt = "pdf", FileName = "writing.pdf" })
+                    if (dialog.ShowDialog(DialogOwner) == DialogResult.OK)
+                    {
+                        WritingPdfService.Export(dialog.FileName, pages, ReadPage(), regionsEnabled.Checked || drawings.Exists(d => !string.IsNullOrEmpty(d.Text)) ? null : WritingEditorText.Normalize(writingInputText.Text));
+                        status.Text = "已导出 " + pages.Count + " 页 PDF（矢量笔迹 + 可提取文字，笔宽 0.3 mm）。";
+                    }
             });
         }
         private void OpenWritingProject()
         {
             using (var dialog = new OpenFileDialog { Filter = "写字项目 (*.awproject)|*.awproject" })
-                if (dialog.ShowDialog(DialogOwner) == DialogResult.OK) Execute(() => {
-                    WritingProject project = WritingProjectService.Load(dialog.FileName);
+                if (dialog.ShowDialog(DialogOwner) == DialogResult.OK) OpenProjectFromShell(dialog.FileName);
+        }
+        internal void OpenProjectFromShell(string fileName)
+        {
+                Execute(() => {
+                    WritingProject project = WritingProjectService.Load(fileName);
                     // Resolve and validate the exact font before changing any current editor fields.
                     GlyphFontPack pack = project.FontPath.Length == 0 ? null : GlyphFontPack.LoadFromFile(project.FontPath);
                     int fontIndex = 0;
@@ -1209,6 +1517,9 @@ namespace GrblPlotter.AutoWriter
                     double[] values = { project.Page.WidthMm, project.Page.HeightMm, project.Page.LeftMm, project.Page.RightMm, project.Page.TopMm, project.Page.BottomMm };
                     string[] keys = { "宽", "高", "左", "右", "上", "下" };
                     for (int i = 0; i < keys.Length; i++) pageFields[keys[i]].Text = Number(values[i]);
+                    pageFields["行数"].Text = project.Page.LinesPerPage.ToString(CultureInfo.InvariantCulture);
+                    pageFields["字高比例"].Text = Number(project.Page.FontHeightPercent);
+                    pageFields["旋转"].Text = project.Page.RotationDegrees.ToString(CultureInfo.InvariantCulture);
                     writingInputText.Text = WritingEditorText.Normalize(project.Text); fontSizeInput.Text = Number(project.FontSizeMm);
                     letterSpacingInput.Text = Number(project.LetterSpacingMm); lineSpacingInput.Text = Number(project.LineSpacingMm);
                     startAtOrigin.Checked = project.AlignStartToOrigin; parkEnabled.Checked = project.ParkEnabled;
@@ -1226,6 +1537,10 @@ namespace GrblPlotter.AutoWriter
                     drawGridLines.Checked = project.DrawGridLines;
                     supplementPath = project.SupplementPath ?? "";
                     supplementPack = supplementPath.Length == 0 ? null : GlyphFontPack.LoadFromFile(supplementPath);
+                    ProjectFilePath = fileName;
+                    drawings = project.Drawings ?? new List<PageDrawing>();
+                    anchorSourceText=project.AnchorSourceText??project.Text;
+                    ProjectDirty = false;
                     UpdatePageMode(); InvalidateWriting(); status.Text = "已打开写字项目；请确认当前机器配置并重新生成预览。";
                 });
         }
@@ -1337,6 +1652,16 @@ namespace GrblPlotter.AutoWriter
                 PublishSheetOverlay();
                 status.Text = "已载入当前第 " + pageSelector.Value + " 页；换纸并确认相同工作原点后手动开始。不会自动发送或自动续页。";
             });
+        }
+        internal int PreviewPageCount { get { return writingPages == null ? 0 : writingPages.Count; } }
+        internal int PreviewPageNumber { get { return (int)pageSelector.Value; } }
+        internal void ChangePreviewPage(int delta)
+        {
+            if (writingPages == null || (pageTask != null && pageTask.IsActive)) return;
+            int next = PreviewPageNumber + delta;
+            if (next < 1 || next > writingPages.Count) return;
+            pageSelector.Value = next;
+            LoadWritingIntoMainPreview();
         }
 
         private int AxisSign(bool xAxis)
@@ -1581,6 +1906,8 @@ namespace GrblPlotter.AutoWriter
             AppendNumber(builder, project.Page.LeftMm); AppendNumber(builder, project.Page.RightMm);
             AppendNumber(builder, project.Page.TopMm); AppendNumber(builder, project.Page.BottomMm);
             builder.Append(project.Page.AutoWrap).Append('|').Append(project.Page.Alignment).Append('|');
+            builder.Append(project.Page.LinesPerPage).Append('|').Append(project.Page.RotationDegrees).Append('|');
+            AppendNumber(builder, project.Page.FontHeightPercent);
             AppendNumber(builder, project.FontSizeMm); AppendNumber(builder, project.LetterSpacingMm); AppendNumber(builder, project.LineSpacingMm);
             AppendNumber(builder, project.ParkX); AppendNumber(builder, project.ParkY);
             builder.Append(project.PenUpValue).Append('|').Append(project.PenDownValue).Append('|');
@@ -1609,6 +1936,7 @@ namespace GrblPlotter.AutoWriter
             builder.Append('|').Append(profile == null ? "" : profile.ProfileId);
             builder.Append('|').Append(profile == null ? null : profile.PenUpValue);
             builder.Append('|').Append(profile == null ? null : profile.PenDownValue);
+            foreach (var d in drawings) { builder.Append(d.Page).Append(d.Kind).Append(d.HasAnchor).Append(d.AnchorIndex).Append(d.AnchorDx).Append(d.AnchorDy).Append(d.Text); foreach(var p in d.Paths) foreach(var v in p) AppendNumber(builder,v); }
             return builder.ToString();
         }
 

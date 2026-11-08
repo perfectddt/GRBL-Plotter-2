@@ -25,8 +25,19 @@ using GrblPlotter.AutoWriter.Models;
 namespace GrblPlotter.AutoWriter.Services
 {
     [System.Runtime.Serialization.DataContract]
+    public sealed class PageReservedArea
+    {
+        [System.Runtime.Serialization.DataMember] public int Page;
+        [System.Runtime.Serialization.DataMember] public double TopMm;
+        [System.Runtime.Serialization.DataMember] public double HeightMm;
+    }
+    [System.Runtime.Serialization.DataContract]
     public sealed class PageLayoutOptions
     {
+        // Transient map rebuilt from persisted Slot objects. Space keeps original glyph metrics.
+        public Dictionary<int,char> BlankGlyphs { get; set; }
+        [System.Runtime.Serialization.DataMember(IsRequired = false)] public List<TextWrapArea> WrapAreas { get; set; }
+        [System.Runtime.Serialization.DataMember(IsRequired = false)] public List<PageReservedArea> ReservedAreas { get; set; }
         [System.Runtime.Serialization.DataMember(IsRequired = true)] public double WidthMm { get; set; }
         [System.Runtime.Serialization.DataMember(IsRequired = true)] public double HeightMm { get; set; }
         [System.Runtime.Serialization.DataMember(IsRequired = true)] public double LeftMm { get; set; }
@@ -36,26 +47,70 @@ namespace GrblPlotter.AutoWriter.Services
         [System.Runtime.Serialization.DataMember(IsRequired = true)] public bool AutoWrap { get; set; }
         // 0 left, 1 center, 2 right. Optional for compatibility with existing projects.
         [System.Runtime.Serialization.DataMember(IsRequired = false)] public int Alignment { get; set; }
+        [System.Runtime.Serialization.DataMember(IsRequired = false)] public int LinesPerPage { get; set; }
+        [System.Runtime.Serialization.DataMember(IsRequired = false)] public double FontHeightPercent { get; set; }
+        [System.Runtime.Serialization.DataMember(IsRequired = false)] public int RotationDegrees { get; set; }
         public void Validate()
         {
+            if (ReservedAreas != null) foreach (var area in ReservedAreas)
+                if (area == null || area.Page < 1 || double.IsNaN(area.TopMm) || double.IsInfinity(area.TopMm) || double.IsNaN(area.HeightMm) || double.IsInfinity(area.HeightMm) || area.TopMm < 0 || area.HeightMm <= 0 || area.TopMm + area.HeightMm > HeightMm + 1e-8)
+                    throw new ArgumentException("预留绘图区的页码、位置或高度无效。");
             double[] values = { WidthMm, HeightMm, LeftMm, RightMm, TopMm, BottomMm };
             foreach (double value in values)
                 if (double.IsNaN(value) || double.IsInfinity(value) || value < 0) throw new ArgumentException("纸张和边距必须是非负有限值。");
             if (WidthMm <= LeftMm + RightMm || HeightMm <= TopMm + BottomMm)
                 throw new ArgumentException("纸张尺寸必须大于两侧边距之和。");
             if (Alignment < 0 || Alignment > 2) throw new ArgumentException("对齐方式无效。");
+            if (LinesPerPage < 0 || LinesPerPage > 1000) throw new ArgumentException("每页行数必须在 0 到 1000 之间，0 表示按行距排版。");
+            if (double.IsNaN(FontHeightPercent) || double.IsInfinity(FontHeightPercent) || FontHeightPercent < 0 || FontHeightPercent > 100)
+                throw new ArgumentException("字高比例必须在 0 到 100 之间，0 表示使用毫米字号。");
+            if (FontHeightPercent > 0 && LinesPerPage == 0) throw new ArgumentException("字高比例需要先指定每页行数。");
+            if (RotationDegrees != 0 && RotationDegrees != 90 && RotationDegrees != 180 && RotationDegrees != 270)
+                throw new ArgumentException("页面旋转只支持 0、90、180、270 度。");
         }
     }
 
     public sealed class WritingLayoutPage
     {
+        public List<LayoutTextAnchor> Anchors { get; internal set; } = new List<LayoutTextAnchor>();
+        public string SourceText { get; internal set; }
         public IList<WritingStroke> Strokes { get; internal set; }
         public int PageNumber { get; internal set; }
         public int LineCount { get; internal set; }
     }
 
-    public static class TextLayoutService
+    public static partial class TextLayoutService
     {
+        public static IList<WritingLayoutPage> RotatePages(IList<WritingLayoutPage> pages, PageLayoutOptions sheet)
+        {
+            sheet.Validate();
+            if (sheet.RotationDegrees == 0) return pages;
+            var result = new List<WritingLayoutPage>();
+            double cx = sheet.WidthMm / 2, cy = -sheet.HeightMm / 2;
+            foreach (var page in pages)
+            {
+                var strokes = new List<WritingStroke>();
+                foreach (var stroke in page.Strokes)
+                {
+                    var points = new List<WritingPoint>();
+                    foreach (var p in stroke.Points)
+                    {
+                        double x = p.X - cx, y = p.Y - cy, rx, ry;
+                        if (sheet.RotationDegrees == 90) { rx = y; ry = -x; }
+                        else if (sheet.RotationDegrees == 180) { rx = -x; ry = -y; }
+                        else { rx = -y; ry = x; }
+                        rx += cx; ry += cy;
+                        if (rx < -1e-8 || rx > sheet.WidthMm + 1e-8 || ry > 1e-8 || ry < -sheet.HeightMm - 1e-8)
+                            throw new InvalidOperationException("旋转后的笔迹超出纸张；请调整区域位置、纸张尺寸或字号。");
+                        points.Add(new WritingPoint(rx, ry));
+                    }
+                    strokes.Add(new WritingStroke(points));
+                }
+                result.Add(new WritingLayoutPage { PageNumber = page.PageNumber, LineCount = page.LineCount, Strokes = strokes, SourceText = page.SourceText });
+            }
+            return result;
+        }
+
         public static IList<WritingStroke> Layout(string text, Func<char, BuiltinGlyph> resolve,
                                                   double letterSpacingMm, double lineSpacingMm,
                                                   double lineHeightMm)
@@ -148,8 +203,13 @@ namespace GrblPlotter.AutoWriter.Services
                 throw new ArgumentException("行高与字号缩放必须是正有限值。");
             double width = page.WidthMm - page.LeftMm - page.RightMm;
             double height = page.HeightMm - page.TopMm - page.BottomMm;
+            double slotHeight = page.LinesPerPage > 0 ? height / page.LinesPerPage : 0;
+            if (slotHeight > 0 && page.FontHeightPercent > 0)
+                glyphScale = slotHeight * page.FontHeightPercent / 100 / BuiltinGlyphLibrary.BodySizeMm;
             text = text.Replace("\r\r\n", "\n").Replace("\r\n", "\n").Replace('\r', '\n');
-            var rows = BuildRows(text, resolve, letterSpacingMm, glyphScale, width, page.AutoWrap);
+            if (page.WrapAreas != null && page.WrapAreas.Count > 0)
+                return LayoutWrapped(text, resolve, letterSpacingMm, lineSpacingMm, glyphScale, page, paginate);
+            var rows = BuildRows(text, resolve, letterSpacingMm, glyphScale, width, page.AutoWrap,null,page.BlankGlyphs);
             var pages = new List<WritingLayoutPage>();
             var output = new List<WritingStroke>();
             var currentPage = new WritingLayoutPage { PageNumber = 1, Strokes = output };
@@ -160,8 +220,26 @@ namespace GrblPlotter.AutoWriter.Services
                 // Empty/space-only rows reserve a nominal body box, so intentional blank lines survive.
                 double inkHeight = current.Strokes.Count == 0 ? BuiltinGlyphLibrary.BodySizeMm * glyphScale : current.MaxY - current.MinY;
                 if (inkHeight > height + 1e-9) throw Overflow(current.LastIndex);
-                if (top + inkHeight > height + 1e-9)
+                if (slotHeight > 0 && inkHeight > slotHeight + 1e-9)
+                    throw new InvalidOperationException("字号超过每行排版槽高度，请减小字号或启用字高百分比。");
+                while (true)
                 {
+                    if (page.ReservedAreas != null)
+                    {
+                        bool moved;
+                        do {
+                            moved = false;
+                            foreach (var area in page.ReservedAreas) {
+                                double start = page.TopMm + top, footprint = slotHeight > 0 ? slotHeight : Math.Max(inkHeight, 1e-6);
+                                if (area.Page == currentPage.PageNumber && start < area.TopMm + area.HeightMm - 1e-8 && start + footprint > area.TopMm + 1e-8) {
+                                    top = area.TopMm + area.HeightMm - page.TopMm;
+                                    if (slotHeight > 0) top = Math.Ceiling(top / slotHeight - 1e-9) * slotHeight;
+                                    moved = true;
+                                }
+                            }
+                        } while (moved);
+                    }
+                    if (top + (slotHeight > 0 ? slotHeight : inkHeight) <= height + 1e-9) break;
                     if (!paginate) throw Overflow(current.LastIndex);
                     output = new List<WritingStroke>();
                     currentPage = new WritingLayoutPage { PageNumber = pages.Count + 1, Strokes = output };
@@ -169,7 +247,10 @@ namespace GrblPlotter.AutoWriter.Services
                     top = 0;
                 }
                 currentPage.LineCount++;
+                if (currentPage.LineCount > 1) currentPage.SourceText += "\n";
+                foreach (var placed in current.Glyphs) currentPage.SourceText += text[placed.Index];
                 double offsetX = page.Alignment == 1 ? (width - current.Width) / 2 : page.Alignment == 2 ? width - current.Width : 0;
+                RecordAnchors(currentPage, current, page.LeftMm + offsetX, page.TopMm + top, inkHeight, glyphScale);
                 foreach (WritingStroke stroke in current.Strokes)
                 {
                     var points = new List<WritingPoint>();
@@ -177,11 +258,11 @@ namespace GrblPlotter.AutoWriter.Services
                         points.Add(new WritingPoint(page.LeftMm + offsetX + point.X, -page.TopMm - top + point.Y - current.MaxY));
                     output.Add(new WritingStroke(points));
                 }
-                top += inkHeight + lineSpacingMm;
+                top += slotHeight > 0 ? slotHeight : inkHeight + lineSpacingMm;
             }
             int count = 0;
             foreach (WritingLayoutPage item in pages) count += item.Strokes.Count;
-            if (count == 0) throw new InvalidOperationException("这段文本没有产生任何笔画。");
+            if (count == 0 && (page.BlankGlyphs==null||page.BlankGlyphs.Count==0)) throw new InvalidOperationException("这段文本没有产生任何笔画。");
             return pages;
         }
 
@@ -191,10 +272,12 @@ namespace GrblPlotter.AutoWriter.Services
             public BuiltinGlyph Glyph;
             public double Start;
             public double Advance;
+            public bool Suppressed;
         }
 
         private sealed class PageRow
         {
+            public double MaxWidth;
             public readonly List<WritingStroke> Strokes = new List<WritingStroke>();
             public readonly List<PlacedGlyph> Glyphs = new List<PlacedGlyph>();
             public double Width, MinY = double.PositiveInfinity, MaxY = double.NegativeInfinity;
@@ -202,11 +285,11 @@ namespace GrblPlotter.AutoWriter.Services
             public int LastIndex;
         }
 
-        private static List<PageRow> BuildRows(string text, Func<char, BuiltinGlyph> resolve, double letterSpacingMm, double glyphScale, double width, bool autoWrap)
+        private static List<PageRow> BuildRows(string text, Func<char, BuiltinGlyph> resolve, double letterSpacingMm, double glyphScale, double width, bool autoWrap, Func<int,double> widthForRow = null,Dictionary<int,char> blanks=null)
         {
             var rows = new List<PageRow>();
-            var row = new PageRow();
-            rows.Add(row);
+            Func<PageRow> next = () => { if(widthForRow != null) width=widthForRow(rows.Count);var value=new PageRow{MaxWidth=width};rows.Add(value);return value; };
+            var row = next();
             var pending = new Queue<int>();
             int cursor = 0;
             int steps = 0;
@@ -218,11 +301,12 @@ namespace GrblPlotter.AutoWriter.Services
                 if (symbol == '\n')
                 {
                     if (pending.Count > 0) throw new InvalidOperationException("换行不能插进尚未排完的一行。");
-                    row = new PageRow(); rows.Add(row); continue;
+                    row = next(); continue;
                 }
                 if (char.IsControl(symbol) || char.IsSurrogate(symbol))
                     throw new InvalidOperationException("不支持的控制字符或扩展字符，位置 " + (index + 1) + "（制表符请改用空格）。");
-                BuiltinGlyph glyph = resolve(symbol);
+                char original;bool suppressed=blanks!=null&&symbol==' '&&blanks.TryGetValue(index,out original);
+                BuiltinGlyph glyph = resolve(suppressed?blanks[index]:symbol);
                 if (glyph == null || !FinitePositive(glyph.AdvanceMm)) throw new InvalidOperationException("字形前进距离无效：" + symbol);
                 if (glyph.Strokes == null) throw new InvalidOperationException("字形笔画无效：" + symbol);
                 double advance = glyph.AdvanceMm * glyphScale;
@@ -243,7 +327,7 @@ namespace GrblPlotter.AutoWriter.Services
                             PlacedGlyph last = row.Glyphs[row.Glyphs.Count - 1];
                             row.Width = last.Start + last.Advance; row.Occupied = true; row.LastIndex = last.Index;
                         }
-                        row = new PageRow(); rows.Add(row);
+                        row = next();
                         moved.Reverse();
                         var again = new Queue<int>();
                         foreach (int movedIndex in moved) again.Enqueue(movedIndex);
@@ -253,10 +337,10 @@ namespace GrblPlotter.AutoWriter.Services
                         continue;
                     }
                     if (WritingLineBreak.CannotStartLine(symbol)) throw Overflow(index);
-                    row = new PageRow(); rows.Add(row); start = 0;
+                    row = next(); start = 0;
                 }
                 if (start + advance > width + 1e-9) throw Overflow(index);
-                row.Glyphs.Add(new PlacedGlyph { Index = index, Glyph = glyph, Start = start, Advance = advance });
+                row.Glyphs.Add(new PlacedGlyph { Index = index, Glyph = glyph, Start = start, Advance = advance,Suppressed=suppressed });
                 row.Width = start + advance; row.Occupied = true; row.LastIndex = index;
             }
             foreach (PageRow current in rows)
@@ -273,11 +357,11 @@ namespace GrblPlotter.AutoWriter.Services
                             double px = placed.Start + point.X * glyphScale;
                             double py = point.Y * glyphScale;
                             if (double.IsNaN(px) || double.IsInfinity(px) || double.IsNaN(py) || double.IsInfinity(py) ||
-                                px < -1e-9 || px > width + 1e-9) throw Overflow(placed.Index);
+                                px < -1e-9 || px > current.MaxWidth + 1e-9) throw Overflow(placed.Index);
                             current.MinY = Math.Min(current.MinY, py); current.MaxY = Math.Max(current.MaxY, py);
                             points.Add(new WritingPoint(px, py));
                         }
-                        current.Strokes.Add(new WritingStroke(points));
+                        if(!placed.Suppressed)current.Strokes.Add(new WritingStroke(points));
                     }
                 }
             }

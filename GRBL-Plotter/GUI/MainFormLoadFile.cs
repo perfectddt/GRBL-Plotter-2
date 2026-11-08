@@ -1,4 +1,4 @@
-﻿/*  GRBL-Plotter. Another GCode sender for GRBL.
+/*  GRBL-Plotter. Another GCode sender for GRBL.
     This file is part of the GRBL-Plotter application.
    
     Copyright (C) 2015-2026 Sven Hasemann contact: svenhb@web.de
@@ -130,7 +130,7 @@ namespace GrblPlotter
         private const string extensionCSV = ".csv,.dat";
         private const string extensionJson = ".pdn-json";
 
-        private const string loadFilter = "G-Code (*.nc, *.cnc, *.ngc, *.gcode, *.tap)|*.nc;*.cnc;*.ngc;*.gcode;*.tap|" +
+        private const string loadFilter = "支持的文件|*.awproject;*.nc;*.cnc;*.ngc;*.gcode;*.tap;*.svg;*.png;*.jpg;*.bmp;*.txt;*.pdf|写字项目 (*.awproject)|*.awproject|G-Code (*.nc, *.cnc, *.ngc, *.gcode, *.tap)|*.nc;*.cnc;*.ngc;*.gcode;*.tap|" +
                                             "SVG - Scalable Vector Graphics|*.svg|" +
                                             "DXF - Drawing Exchange Format |*.dxf|" +
                                             "HPGL - HP Graphics Language (*.plt, *.hpgl)|*.plt;*.hpgl|" +
@@ -658,6 +658,18 @@ namespace GrblPlotter
 
         private bool LoadFile(string fileName)
         {
+            if (string.Equals(Path.GetExtension(fileName), ".pdf", StringComparison.OrdinalIgnoreCase) || string.Equals(Path.GetExtension(fileName), ".txt", StringComparison.OrdinalIgnoreCase))
+            {
+                if (isStreaming || writingPageTask.IsActive) { MessageBox.Show(this, "请先结束当前书写任务再导入文字。"); return false; }
+                ShowMachineSetup(2); machineSetupForm.ImportSourceFromShell(fileName); return true;
+            }
+            if (string.Equals(Path.GetExtension(fileName), ".awproject", StringComparison.OrdinalIgnoreCase))
+            {
+                if (isStreaming || writingPageTask.IsActive) { MessageBox.Show(this, "请先结束当前书写任务再打开项目。"); return false; }
+                ShowMachineSetup(2);
+                machineSetupForm.OpenProjectFromShell(fileName);
+                return true;
+            }
             if (string.IsNullOrEmpty(fileName) || !fileName.Contains("."))
             {
                 Logger.Error("LoadFile '{0}' fileName is empty or does not contain '.' to separate extension", fileName);

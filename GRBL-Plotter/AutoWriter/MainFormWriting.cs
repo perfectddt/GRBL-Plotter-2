@@ -117,6 +117,24 @@ namespace GrblPlotter
                 ? " " + writingPageTask.CheckpointText : "";
             writingPageStatus.Text = writingPageTask.StatusText + (progress.Length == 0 ? "" : " " + progress) + checkpoint;
             writingPageConfirm.Enabled = writingPageTask.PaperButtonEnabled;
+            if (ModernUiConfig.ModernEnabled)   // modern shell: iOS-like soft semantic fills
+            {
+                writingPageStatus.ForeColor = AutoWriter.Ui.UiTheme.Text;
+                switch (writingPageTask.Phase)
+                {
+                    case PageTaskPhase.WaitingPaper: writingPageBar.BackColor = AutoWriter.Ui.UiTheme.YellowSoft; writingPageStatus.ForeColor = AutoWriter.Ui.UiTheme.YellowText; break;
+                    case PageTaskPhase.Writing: writingPageBar.BackColor = AutoWriter.Ui.UiTheme.GreenSoft; break;
+                    case PageTaskPhase.Paused: writingPageBar.BackColor = AutoWriter.Ui.UiTheme.YellowSoft; break;
+                    case PageTaskPhase.Completed: writingPageBar.BackColor = AutoWriter.Ui.UiTheme.GreenSoft; break;
+                    case PageTaskPhase.Fault:
+                    case PageTaskPhase.Unknown:
+                    case PageTaskPhase.Cancelled: writingPageBar.BackColor = AutoWriter.Ui.UiTheme.RedSoft; writingPageStatus.ForeColor = AutoWriter.Ui.UiTheme.RedText; break;
+                    case PageTaskPhase.WaitingStart: writingPageBar.BackColor = AutoWriter.Ui.UiTheme.AccentSoft; break;
+                    default: writingPageBar.BackColor = AutoWriter.Ui.UiTheme.Background; break;
+                }
+                return;
+            }
+            writingPageStatus.ForeColor = SystemColors.ControlText;
             switch (writingPageTask.Phase)
             {
                 case PageTaskPhase.WaitingPaper: writingPageBar.BackColor = Color.Orange; break;

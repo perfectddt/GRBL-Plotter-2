@@ -30,6 +30,7 @@ namespace GrblPlotter.UserControls
     {
         private readonly float DpiScaling;
         private bool isLarge = true;
+        private bool modernLayout;
         private readonly int controlHeightFold = MyControl.MinimumHeightFolded;
         private readonly int controlHeightUnfold = 115;
 
@@ -88,18 +89,30 @@ namespace GrblPlotter.UserControls
             timerBlink.Start();
         }
 
+        /// <summary>
+        /// Modern-shell skin: the generic ApplyControlSkin pass flattens every button to gray,
+        /// which would erase the designer's LightPink "danger" cue on soft-reset. Re-mark it as
+        /// Danger (StyleFlatButton also sets Tag, so later skin passes leave it alone). Folded
+        /// cards stay white - the height change alone signals the collapsed state.
+        /// </summary>
+        internal void EnableModernSkin()
+        {
+            modernLayout = true;
+            AutoWriter.Ui.UiTheme.StyleFlatButton(BtnReset, AutoWriter.Ui.UiButtonKind.Danger);
+        }
+
         internal void SetHeight(bool setLarge)
         {
             if (setLarge)
             {
-                GbFlowControl.BackColor = MyControl.PanelBackColor; // Color.WhiteSmoke;
+                GbFlowControl.BackColor = modernLayout ? AutoWriter.Ui.UiTheme.Card : MyControl.PanelBackColor; // Color.WhiteSmoke;
                 GbFlowControl.ForeColor = MyControl.PanelForeColor;
                 SetControlHeight(controlHeightUnfold);
             }
             else
             {
-                GbFlowControl.BackColor = MyControl.NotifyYellow;
-                GbFlowControl.ForeColor = Colors.ContrastColor(MyControl.NotifyYellow);
+                GbFlowControl.BackColor = modernLayout ? AutoWriter.Ui.UiTheme.Card : MyControl.NotifyYellow;
+                GbFlowControl.ForeColor = Colors.ContrastColor(GbFlowControl.BackColor);
                 SetControlHeight(controlHeightFold);
             }
             isLarge = setLarge;

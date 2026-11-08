@@ -84,7 +84,7 @@ namespace GrblPlotter.AutoWriter.Services
                         pages = TextLayoutService.LayoutPages(WritingEditorText.Normalize(r.Text), local, r.LetterGap, r.LineGap, 12, r.FontSize / BuiltinGlyphLibrary.BodySizeMm, r.Options());
                         total = Math.Max(total, pages.Count);
                     } else {
-                        pages = new List<WritingLayoutPage> { new WritingLayoutPage { PageNumber = 1, Strokes = TextLayoutService.LayoutPage(WritingEditorText.Normalize(r.Text), local, r.LetterGap, r.LineGap, 12, r.FontSize / BuiltinGlyphLibrary.BodySizeMm, r.Options()) } };
+                        pages = new List<WritingLayoutPage> { new WritingLayoutPage { PageNumber = 1, SourceText = WritingEditorText.Normalize(r.Text), Strokes = TextLayoutService.LayoutPage(WritingEditorText.Normalize(r.Text), local, r.LetterGap, r.LineGap, 12, r.FontSize / BuiltinGlyphLibrary.BodySizeMm, r.Options()) } };
                     }
                     localPages.Add(pages);
                 } catch (Exception error) { throw new InvalidOperationException("区域 " + (i + 1) + "：" + error.Message, error); }
@@ -92,12 +92,15 @@ namespace GrblPlotter.AutoWriter.Services
             var output = new List<WritingLayoutPage>();
             int strokeCount = 0;
             for (int pageIndex = 0; pageIndex < total; pageIndex++) {
+                var pageText = new System.Text.StringBuilder();
                 var strokes = new List<WritingStroke>();
                 for (int i = 0; i < regions.Count; i++) {
                     var pages = localPages[i]; var r = regions[i];
                     if (pages == null) continue;
                     int local = r.PageBehavior == 0 ? pageIndex : 0;
                     if (local >= pages.Count || (r.PageBehavior == 2 && pageIndex != 0) || (r.PageBehavior == 3 && pageIndex != total - 1)) continue;
+                    if (pageText.Length > 0) pageText.Append('\n');
+                    pageText.Append(pages[local].SourceText);
                     foreach (var stroke in pages[local].Strokes) {
                         var points = new List<WritingPoint>();
                         foreach (var point in stroke.Points) points.Add(new WritingPoint(point.X + r.X, point.Y - r.Y));
@@ -105,7 +108,7 @@ namespace GrblPlotter.AutoWriter.Services
                     }
                 }
                 strokeCount += strokes.Count;
-                output.Add(new WritingLayoutPage { PageNumber = pageIndex + 1, Strokes = strokes });
+                output.Add(new WritingLayoutPage { PageNumber = pageIndex + 1, Strokes = strokes, SourceText = pageText.ToString() });
             }
             if (strokeCount == 0) throw new InvalidOperationException("区域尚未填写可书写的文字。");
             return output;

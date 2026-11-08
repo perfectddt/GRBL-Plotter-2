@@ -77,7 +77,10 @@ namespace GrblPlotter
         private Panel modernGCodeStrip, modernGCodeBody, modernAdvancedBody;
         private Panel modernCanvasCard, modernConfigHost;
         private Button modernTabPreview, modernTabSetup;
-        private Label modernGCodeHeader, modernConnDot, modernConnText, modernFileChip, modernPageSummary;
+        private Button modernPreviousPage, modernNextPage;
+        private Label modernPageNumber;
+        private Label modernGCodeHeader, modernConnText, modernFileChip, modernPageSummary;
+        private StatusDot modernConnDot;
         private ToolStripStatusLabel modernStatusProfile;
         private Timer modernStatusTimer;
         private bool modernShellActive, modernGCodeOpen, modernAdvancedOpen, modernSetupPage;
@@ -122,6 +125,7 @@ namespace GrblPlotter
             // appended. The duplicated custom toolbar was removed on user feedback - keeping both
             // rows showed the same menus twice.
             ConfigureMenuStrip();
+            saveToolStripMenuItem.Text = "保存G代码…";
 
             // ---- three-column root ----
             modernRoot = new TableLayoutPanel
@@ -151,9 +155,9 @@ namespace GrblPlotter
             Panel leftColumn = MakeColumn();
             Panel centerColumn = MakeColumn();
             Panel rightColumn = MakeColumn();
-            modernRoot.Controls.Add(leftColumn, 0, 0);
+            modernRoot.Controls.Add(MakeCollapsibleColumn(leftColumn, true), 0, 0);
             modernRoot.Controls.Add(centerColumn, 1, 0);
-            modernRoot.Controls.Add(rightColumn, 2, 0);
+            modernRoot.Controls.Add(MakeCollapsibleColumn(rightColumn, false), 2, 0);
             UiTheme.EnableDoubleBuffer(modernRoot);
             UiTheme.EnableDoubleBuffer(leftColumn);
             UiTheme.EnableDoubleBuffer(centerColumn);
@@ -166,6 +170,73 @@ namespace GrblPlotter
             AppendStatusLabels();
             if (!ok) Logger.Error("ModernShell: not every control could be moved, modern shell disabled");
             return ok;
+        }
+
+        private Panel MakeCollapsibleColumn(Panel content, bool left)
+        {
+            var host = new Panel
+            {
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0),
+                BackColor = Color.Transparent
+            };
+            var toggle = MakeShellButton("", UiButtonKind.Normal, null);
+            toggle.Name = left ? "modernToggleLeftSidebar" : "modernToggleRightSidebar";
+            toggle.Dock = DockStyle.Top;
+            toggle.AutoSize = false;
+            toggle.Height = 30;
+            toggle.Margin = new Padding(4, 0, 4, 4);
+            bool collapsed = false;
+            float expandedWidth = left ? 250f : 292f;
+            var grip = new Panel { Name = left ? "modernLeftResizeGrip" : "modernRightResizeGrip",
+                Dock = left ? DockStyle.Right : DockStyle.Left, Width = 7,
+                Cursor = Cursors.SizeWE, BackColor = UiTheme.CardBorder };
+            int dragX = 0; float dragWidth = 0;
+            bool resizing = false;
+            grip.MouseDown += (s, e) => {
+                if (e.Button != MouseButtons.Left || collapsed) return;
+                dragX = Control.MousePosition.X;
+                dragWidth = modernRoot.ColumnStyles[left ? 0 : 2].Width;
+                resizing = true;
+                grip.Capture = true;
+            };
+            grip.MouseMove += (s, e) => {
+                if (!resizing || !grip.Capture || collapsed) return;
+                float desired = dragWidth + (Control.MousePosition.X - dragX) * (left ? 1 : -1);
+                float other = modernRoot.ColumnStyles[left ? 2 : 0].Width;
+                float maximum = Math.Max(160, modernRoot.ClientSize.Width - modernRoot.Padding.Horizontal - other - 340);
+                expandedWidth = Math.Max(160, Math.Min(desired, maximum));
+                modernRoot.ColumnStyles[left ? 0 : 2].Width = expandedWidth;
+            };
+            grip.MouseUp += (s, e) => { resizing = false; grip.Capture = false; };
+            grip.MouseCaptureChanged += (s, e) => { if (!grip.Capture) resizing = false; };
+            Action refresh = () =>
+            {
+                toggle.Text = collapsed ? (left ? "›" : "‹")
+                    : (left ? "‹ 收起左侧栏" : "收起右侧栏 ›");
+                toggle.AccessibleName = collapsed
+                    ? (left ? "展开左侧栏" : "展开右侧栏")
+                    : (left ? "收起左侧栏" : "收起右侧栏");
+            };
+            toggle.Click += (s, e) =>
+            {
+                modernRoot.SuspendLayout();
+                try
+                {
+                    collapsed = !collapsed;
+                    content.Visible = !collapsed;
+                    grip.Visible = !collapsed;
+                    modernRoot.ColumnStyles[left ? 0 : 2].Width = collapsed ? 32f : expandedWidth;
+                    refresh();
+                }
+                finally { modernRoot.ResumeLayout(true); }
+            };
+            refresh();
+            host.Controls.Add(content);
+            host.Controls.Add(toggle);
+            host.Controls.Add(grip);
+            UiTheme.EnableDoubleBuffer(host);
+            return host;
         }
 
         private static Panel MakeColumn()
@@ -231,7 +302,15 @@ namespace GrblPlotter
                 }
                 menuStrip1.Items.Add(new ToolStripSeparator());
 
-                var setupItem = new ToolStripMenuItem("✍ 写字设置")
+                // hairline under the menu bar: the shell below is all rounded cards on a gray
+                // background, so the white bar needs a visible lower edge to read as a bar
+                menuStrip1.Paint += (s, a) =>
+                {
+                    using (var pen = new Pen(UiTheme.CardBorder))
+                        a.Graphics.DrawLine(pen, 0, menuStrip1.Height - 1, menuStrip1.Width, menuStrip1.Height - 1);
+                };
+
+                var setupItem = new ToolStripMenuItem("写字设置")   // no emoji prefix: font-dependent glyphs render as boxes on some systems
                 {
                     BackColor = UiTheme.Accent,
                     ForeColor = Color.White,
@@ -270,13 +349,13 @@ namespace GrblPlotter
             // ---- content card ----
             Panel contentBody;
             Panel contentCard = UiTheme.MakeCard("内容", out contentBody);
-            AddModeRow(contentBody, "写字排版", "文字 / 笔记逐页书写", true,
+            AddModeRow(contentBody, "写字排版", "文字 / 笔记逐页书写",
                 (s, a) => ShowMachineSetup(2));
-            AddModeRow(contentBody, "区域模板", "多区域自动排版续页", false,
+            AddModeRow(contentBody, "区域模板", "多区域自动排版续页",
                 (s, a) => ShowMachineSetup(3));
-            AddModeRow(contentBody, "SVG 导入", "矢量图形描边", false,
+            AddModeRow(contentBody, "SVG 导入", "矢量图形描边",
                 (s, a) => BtnOpenFile_Click(this, EventArgs.Empty));
-            AddModeRow(contentBody, "图片导入", "位图转笔迹", false,
+            AddModeRow(contentBody, "图片导入", "位图转笔迹",
                 (s, a) => { if (imageToolStripMenuItem != null) imageToolStripMenuItem.PerformClick(); });
             column.Controls.Add(contentCard);
             column.Controls.SetChildIndex(contentCard, 2);   // higher index docks first: 内容 must be on top
@@ -302,22 +381,26 @@ namespace GrblPlotter
             // ---- file card ----
             Panel fileBody;
             Panel fileCard = UiTheme.MakeCard("文件", out fileBody);
-            Panel row = MakeToolbarButtonRow();
-            row.Controls.Add(MakeShellButton("打开", UiButtonKind.Normal, (s, a) => BtnOpenFile_Click(this, EventArgs.Empty)));
-            row.Controls.Add(MakeShellButton("保存", UiButtonKind.Normal, (s, a) => BtnSaveFile_Click(this, EventArgs.Empty)));
-            row.Controls.Add(MakeShellButton("新建", UiButtonKind.Normal, (s, a) => ModernNewFile()));
+            var row = new UiRow(UiTheme.RowHeight);
+            row.Place(MakeShellButton("新建项目", UiButtonKind.Normal, (s, a) => { if (isStreaming || writingPageTask.IsActive) return; if (MessageBox.Show(this, "新建将清空当前正文和区域，未保存的修改会丢失。继续？", "新建项目", MessageBoxButtons.OKCancel) != DialogResult.OK) return; ShowMachineSetup(2); machineSetupForm.NewProjectFromShell(); }), 0);
+            row.Place(MakeShellButton("打开文件", UiButtonKind.Normal, (s, a) => BtnOpenFile_Click(this, EventArgs.Empty)), 0);
             UiTheme.StackBody(fileBody, row);
+            var saveRow = new UiRow(UiTheme.RowHeight);
+            saveRow.Place(MakeShellButton("保存项目", UiButtonKind.Normal, (s, a) => { ShowMachineSetup(2); machineSetupForm.SaveProjectFromShell(); }), 0);
+            UiTheme.StackBody(fileBody, saveRow);
             column.Controls.Add(fileCard);
             column.Controls.SetChildIndex(fileCard, 0);
         }
 
-        private void AddModeRow(Panel body, string title, string desc, bool selected, EventHandler onClick)
+        private void AddModeRow(Panel body, string title, string desc, EventHandler onClick)
         {
+            // The rows are navigation shortcuts, not a mode indicator - no permanent "selected"
+            // tint (it used to be hardcoded on 写字排版); hover gives the feedback instead.
             Panel rowPanel = new Panel
             {
                 Dock = DockStyle.Top,
                 Height = 44,
-                BackColor = selected ? UiTheme.AccentSoft : UiTheme.Card,
+                BackColor = UiTheme.Card,
                 Cursor = Cursors.Hand,
                 Margin = new Padding(0, 0, 0, 6)
             };
@@ -326,7 +409,7 @@ namespace GrblPlotter
                 Left = 10, Top = 5, AutoSize = true,
                 Text = title,
                 Font = UiTheme.SafeFont(9f, FontStyle.Bold),
-                ForeColor = selected ? UiTheme.Accent : UiTheme.Text,
+                ForeColor = UiTheme.Text,
                 BackColor = Color.Transparent,
                 Cursor = Cursors.Hand
             };
@@ -344,6 +427,19 @@ namespace GrblPlotter
             rowPanel.Click += onClick;
             titleLabel.Click += onClick;
             descLabel.Click += onClick;
+            EventHandler hoverOn = (s, a) => rowPanel.BackColor = UiTheme.AccentSoft;
+            EventHandler hoverOff = (s, a) =>
+            {
+                // leaving a child label still counts as inside while the cursor is over the row
+                if (!rowPanel.ClientRectangle.Contains(rowPanel.PointToClient(Cursor.Position)))
+                    rowPanel.BackColor = UiTheme.Card;
+            };
+            rowPanel.MouseEnter += hoverOn;
+            titleLabel.MouseEnter += hoverOn;
+            descLabel.MouseEnter += hoverOn;
+            rowPanel.MouseLeave += hoverOff;
+            titleLabel.MouseLeave += hoverOff;
+            descLabel.MouseLeave += hoverOff;
             UiTheme.StackBody(body, rowPanel);
         }
 
@@ -392,8 +488,8 @@ namespace GrblPlotter
 
             Label viewHint = new Label
             {
-                Dock = DockStyle.Left,
-                Width = 190,
+                Dock = DockStyle.Fill,          // takes whatever is left; AutoEllipsis keeps narrow windows clean
+                AutoEllipsis = true,
                 Text = "  预览 = 纸面朝向（仅显示）",
                 TextAlign = ContentAlignment.MiddleLeft,
                 ForeColor = UiTheme.SubText,
@@ -403,7 +499,7 @@ namespace GrblPlotter
             FlowLayoutPanel viewButtons = new FlowLayoutPanel
             {
                 Dock = DockStyle.Right,
-                Width = 280,
+                Width = 252,                    // 3 x 74 buttons + gaps; the old 280 left dead space
                 FlowDirection = FlowDirection.RightToLeft,
                 WrapContents = false,
                 Padding = new Padding(0, 2, 6, 0),
@@ -416,26 +512,28 @@ namespace GrblPlotter
             viewButtons.Controls.Add(MakeShellButton("适应窗口", UiButtonKind.Normal, (s, a) =>
             { try { CmsPicBoxResetZooming_Click(this, EventArgs.Empty); } catch (Exception err) { Logger.Error(err, "view fit"); } }, 74));
 
-            // ---- preview / setup segment (setup page embeds MachineSetupForm here) ----
+            // ---- preview / setup segment: its own strip ABOVE the canvas card, always
+            // visible. The canvas card (and with it the old toolbar) hides on the setup page,
+            // which used to strand the operator there with no way back to the preview ----
+            Panel segmentStrip = new Panel { Dock = DockStyle.Top, Height = 34, BackColor = Color.Transparent };
             FlowLayoutPanel segment = new FlowLayoutPanel
             {
                 Dock = DockStyle.Left,
                 Width = 190,
                 FlowDirection = FlowDirection.LeftToRight,
                 WrapContents = false,
-                Padding = new Padding(6, 3, 0, 0),
+                Padding = new Padding(6, 2, 0, 0),
                 BackColor = Color.Transparent
             };
             modernTabPreview = MakeShellButton("预览", UiButtonKind.Primary, (s, a) => SwitchCenterPage(false), 74);
             modernTabSetup = MakeShellButton("写字配置", UiButtonKind.Normal, (s, a) => ShowMachineSetup(), 86);
             segment.Controls.Add(modernTabPreview);
             segment.Controls.Add(modernTabSetup);
+            segmentStrip.Controls.Add(segment);
 
             viewToolbar.Controls.Add(viewButtons);
             viewToolbar.Controls.Add(viewHint);
-            viewToolbar.Controls.Add(segment);
-            viewToolbar.Controls.SetChildIndex(viewHint, 0);
-            viewToolbar.Controls.SetChildIndex(segment, 0);
+            viewToolbar.Controls.SetChildIndex(viewHint, 0);   // Fill docks last; the Right button group keeps its edge
 
             // ---- setup page host (MachineSetupForm is embedded here in modern mode) ----
             modernConfigHost = new Panel
@@ -448,6 +546,15 @@ namespace GrblPlotter
             modernCanvasCard.Controls.Add(viewBody);
             modernCanvasCard.Controls.SetChildIndex(viewBody, 0);
             modernCanvasCard.Controls.Add(viewToolbar);
+            var pageBar = new FlowLayoutPanel { Dock = DockStyle.Left, Width = 270, Height = 34, WrapContents = false, BackColor = UiTheme.Card };
+            modernPreviousPage = MakeShellButton("上一页", UiButtonKind.Normal, (s, e) => ChangeModernPreviewPage(-1), 74);
+            modernNextPage = MakeShellButton("下一页", UiButtonKind.Normal, (s, e) => ChangeModernPreviewPage(1), 74);
+            modernPageNumber = new Label { AutoSize = true, Padding = new Padding(4, 8, 10, 0), Text = "尚未生成分页" };
+            pageBar.Controls.Add(modernPreviousPage);
+            pageBar.Controls.Add(modernPageNumber);
+            pageBar.Controls.Add(modernNextPage);
+            viewToolbar.Controls.Add(pageBar);
+            RefreshModernPreviewPages();
             modernCanvasCard.Controls.Add(modeRowHost);
             UiTheme.EnableDoubleBuffer(viewBody);
             UiTheme.EnableDoubleBuffer(viewToolbar);
@@ -456,6 +563,7 @@ namespace GrblPlotter
             column.Controls.SetChildIndex(modernCanvasCard, 0);
             column.Controls.Add(modernConfigHost);
             column.Controls.Add(modernGCodeStrip);
+            column.Controls.Add(segmentStrip);   // highest index docks first: the segment strip keeps the top edge in BOTH pages
             UiTheme.EnableDoubleBuffer(modernCanvasCard);
             UiTheme.EnableDoubleBuffer(modernConfigHost);
 
@@ -473,11 +581,37 @@ namespace GrblPlotter
             modernCanvasCard.Visible = !showSetup;
             modernConfigHost.Visible = showSetup;
             modernGCodeStrip.Visible = !showSetup;
+            // ForeColor must flip together with BackColor: the buttons were created as
+            // Primary (white text) and Normal (dark text), so recolouring the background
+            // alone leaves white-on-gray / dark-on-blue unreadable combinations.
             if (modernTabPreview != null)
+            {
                 modernTabPreview.BackColor = showSetup ? UiTheme.FillGray : UiTheme.Accent;
+                modernTabPreview.ForeColor = showSetup ? UiTheme.Text : Color.White;
+            }
             if (modernTabSetup != null)
+            {
                 modernTabSetup.BackColor = showSetup ? UiTheme.Accent : UiTheme.FillGray;
+                modernTabSetup.ForeColor = showSetup ? Color.White : UiTheme.Text;
+            }
             if (!showSetup) RefreshPageSummary();   // setup was possibly saved - reload the summary
+        }
+        private void ChangeModernPreviewPage(int delta)
+        {
+            if (isStreaming || writingPageTask.IsActive || machineSetupForm == null || machineSetupForm.IsDisposed) return;
+            machineSetupForm.ChangePreviewPage(delta);
+            RefreshModernPreviewPages();
+        }
+        private void RefreshModernPreviewPages()
+        {
+            if (modernPageNumber == null) return;
+            bool ready = machineSetupForm != null && !machineSetupForm.IsDisposed;
+            int count = ready ? machineSetupForm.PreviewPageCount : 0;
+            int current = ready ? machineSetupForm.PreviewPageNumber : 0;
+            modernPageNumber.Text = count > 0 ? current + " / " + count + " 页" : "尚未生成分页";
+            bool enabled = count > 0 && !isStreaming && !writingPageTask.IsActive;
+            modernPreviousPage.Enabled = enabled && current > 1;
+            modernNextPage.Enabled = enabled && current < count;
         }
 
         /// <summary>
@@ -521,11 +655,10 @@ namespace GrblPlotter
             Panel connBody;
             Panel connCard = UiTheme.MakeCard("连接", out connBody);
             Panel connStatus = new Panel { Dock = DockStyle.Top, Height = 26, BackColor = UiTheme.Card };
-            modernConnDot = new Label
+            modernConnDot = new StatusDot
             {
-                Left = 0, Top = 5, Width = 16, Height = 16,
-                Text = "●", ForeColor = Color.LightGray,
-                Font = UiTheme.SafeFont(10f), BackColor = Color.Transparent
+                Left = 2, Top = 6, Width = 14, Height = 14,
+                DotColor = Color.LightGray
             };
             modernConnText = new Label
             {
@@ -594,6 +727,7 @@ namespace GrblPlotter
             UiTheme.ApplyControlSkin(ucJogControlAll);
             ucJogControlAll.EnableCenteredLayout();
             UiTheme.ApplyControlSkin(ucStreaming);
+            ucStreaming.EnableModernLayout();
 
             // ---- optional moves into the advanced card ----
             TryMove(ucFlowControl, modernAdvancedBody, DockStyle.Top, "ucFlowControl");
@@ -602,6 +736,15 @@ namespace GrblPlotter
             TryMove(ucOverrides, modernAdvancedBody, DockStyle.Top, "ucOverrides");
             TryMove(ucMoveToZero, modernAdvancedBody, DockStyle.Top, "ucMoveToZero");
             TryMove(ucMoveToGraphic, modernAdvancedBody, DockStyle.Top, "ucMoveToGraphic");
+            // same flat skin inside the advanced card - expanding it must not reveal classic chrome
+            foreach (Control advanced in new Control[] { ucFlowControl, ucSetCoordinateSystem, ucSetOffset, ucOverrides, ucMoveToZero, ucMoveToGraphic })
+                if (advanced != null) UiTheme.ApplyControlSkin(advanced);
+            ucFlowControl.EnableModernSkin();   // re-mark the soft-reset button as Danger after skinning
+            ucSetCoordinateSystem.EnableModernSkin();
+            ucSetOffset.EnableModernSkin();
+            ucOverrides.EnableModernSkin();
+            ucMoveToZero.EnableModernSkin();
+            ucMoveToGraphic.EnableModernSkin();
             return ok;
         }
 
@@ -648,6 +791,7 @@ namespace GrblPlotter
 
         private void UpdateModernStatus()
         {
+            RefreshModernPreviewPages();
             if (!modernShellActive) return;
 
             bool connected = false;
@@ -661,7 +805,7 @@ namespace GrblPlotter
                 }
             }
             catch (Exception) { connected = false; }
-            modernConnDot.ForeColor = connected ? UiTheme.Green : Color.LightGray;
+            modernConnDot.DotColor = connected ? UiTheme.Green : Color.LightGray;
             string state = connected ? portText + " 已连接" : "未连接（COM CNC 窗口可详细操作）";
             if (modernConnText.Text != state) modernConnText.Text = state;
 
@@ -669,9 +813,11 @@ namespace GrblPlotter
             if (!string.IsNullOrEmpty(boundWritingProgram))
                 fileText = "已载入：写字程序" + (boundWritingStale ? "（设置已变化，需重新生成）" : "");
             else if (!string.IsNullOrEmpty(lastLoadFile) && lastLoadFile != "Nothing loaded")
-                fileText = "已打开：" + Path.GetFileName(lastLoadFile);
+                fileText = "G代码程序：" + Path.GetFileName(lastLoadFile);
             else
                 fileText = "尚未载入文件";
+            if (machineSetupForm != null && !machineSetupForm.IsDisposed && !string.IsNullOrEmpty(machineSetupForm.ProjectFilePath))
+                fileText = "写字项目：" + Path.GetFileName(machineSetupForm.ProjectFilePath) + (machineSetupForm.ProjectDirty ? " · 已修改" : "") + "\n" + fileText;
             try
             {
                 if (writingPageTask != null && !string.IsNullOrEmpty(writingPageTask.StatusText))

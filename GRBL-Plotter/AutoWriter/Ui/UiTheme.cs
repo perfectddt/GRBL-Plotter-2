@@ -21,6 +21,36 @@ namespace GrblPlotter.AutoWriter.Ui
 {
     internal enum UiButtonKind { Normal, Primary, Success, Warning, Danger }
 
+    /// <summary>Small round status light - painted, so it does not depend on font glyph coverage.</summary>
+    internal sealed class StatusDot : Panel
+    {
+        private Color dotColor = Color.LightGray;
+
+        public Color DotColor
+        {
+            get { return dotColor; }
+            set { if (dotColor != value) { dotColor = value; Invalidate(); } }
+        }
+
+        public StatusDot()
+        {
+            Size = new Size(14, 14);
+            BackColor = Color.Transparent;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            try
+            {
+                e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                int d = Math.Max(2, Math.Min(Width, Height) - 4);
+                using (var brush = new SolidBrush(dotColor))
+                    e.Graphics.FillEllipse(brush, 2, 2, d, d);
+            }
+            catch (Exception) { /* cosmetic only */ }
+        }
+    }
+
     /// <summary>iOS-like grouped surface: rounded white card with a hairline border.</summary>
     internal sealed class RoundedPanel : Panel
     {
@@ -90,6 +120,7 @@ namespace GrblPlotter.AutoWriter.Ui
         public static readonly Color AccentSoft = Color.FromArgb(0xE8, 0xF2, 0xFF);
         public static readonly Color Green = Color.FromArgb(0x34, 0xC7, 0x59);        // systemGreen
         public static readonly Color GreenDark = Color.FromArgb(0x28, 0xA4, 0x45);
+        public static readonly Color GreenSoft = Color.FromArgb(0xE1, 0xF5, 0xE7);    // soft success fill
         public static readonly Color YellowSoft = Color.FromArgb(0xFF, 0xF3, 0xE0);
         public static readonly Color YellowText = Color.FromArgb(0x9A, 0x64, 0x00);
         public static readonly Color YellowBorder = Color.FromArgb(0xFF, 0xD5, 0x8A);
@@ -142,9 +173,11 @@ namespace GrblPlotter.AutoWriter.Ui
                     button.BackColor = Green; button.ForeColor = Color.White;
                     button.FlatAppearance.MouseOverBackColor = GreenDark; break;
                 case UiButtonKind.Warning:
-                    button.BackColor = YellowSoft; button.ForeColor = YellowText; break;
+                    button.BackColor = YellowSoft; button.ForeColor = YellowText;
+                    button.FlatAppearance.MouseOverBackColor = YellowBorder; break;   // keep the semantic tint on hover
                 case UiButtonKind.Danger:
-                    button.BackColor = RedSoft; button.ForeColor = RedText; break;
+                    button.BackColor = RedSoft; button.ForeColor = RedText;
+                    button.FlatAppearance.MouseOverBackColor = RedBorder; break;
             }
             EventHandler resizer = (s, a) => ApplyRoundedRegion(button, 8);
             button.Resize += resizer;
@@ -253,8 +286,8 @@ namespace GrblPlotter.AutoWriter.Ui
                 TextAlign = ContentAlignment.MiddleLeft,
                 Height = ControlHeight
             };
-            using (Graphics graphics = label.CreateGraphics())
-                label.Width = (int)Math.Ceiling(graphics.MeasureString(text, label.Font).Width) + 2;
+            label.Width = TextRenderer.MeasureText(text, label.Font).Width + 6;
+            label.FontChanged += (s, e) => label.Width = TextRenderer.MeasureText(label.Text, label.Font).Width + 6;
             return label;
         }
 
@@ -371,7 +404,7 @@ namespace GrblPlotter.AutoWriter.Ui
         {
             if (!MainForm.ModernUiConfig.ModernEnabled) return color;
             if (color.R > 180 && color.B > 180 && color.G < 120) return AccentSoft;
-            if (color.G > 160 && color.R < 160 && color.B < 160) return Color.FromArgb(225, 245, 231);
+            if (color.G > 160 && color.R < 160 && color.B < 160) return GreenSoft;
             if (color.R > 180 && color.G < 150 && color.B < 150) return Color.FromArgb(255, 230, 230);
             if (color.R > 180 && color.G > 160 && color.B < 170) return Color.FromArgb(255, 245, 216);
             return color;
@@ -410,7 +443,11 @@ namespace GrblPlotter.AutoWriter.Ui
                     label.BackColorChanged += (sender, args) =>
                     {
                         Color fill = StatusFill(label.BackColor);
-                        if (fill != label.BackColor) label.BackColor = fill;
+                        if (fill != label.BackColor)
+                        {
+                            label.BackColor = fill;
+                            label.ForeColor = Text;   // caller's contrast color matched the saturated original
+                        }
                     };
                 }
             }
@@ -551,7 +588,9 @@ namespace GrblPlotter.AutoWriter.Ui
     internal sealed class UiGroup
     {
         private readonly Panel body;
+        private readonly string title;
         private UiRow row;
+        private bool collapsed;
 
         public Control Card { get; private set; }
         public Label Header { get; private set; }
@@ -560,9 +599,29 @@ namespace GrblPlotter.AutoWriter.Ui
 
         public UiGroup(string title)
         {
+            this.title = title;
             Card = UiTheme.MakeCard(title, out body, out Label header);
             Header = header;
             NewRow();
+        }
+
+        /// <summary>
+        /// Let the operator fold the card down to its caption (click the caption to toggle).
+        /// Used on the calibration tab so rarely touched groups do not push the program card
+        /// below the fold. Same pattern as the advanced card in the main window.
+        /// </summary>
+        public void SetCollapsible(bool startCollapsed)
+        {
+            Header.Cursor = Cursors.Hand;
+            Header.Click += (sender, args) => SetCollapsed(!collapsed);
+            SetCollapsed(startCollapsed);
+        }
+
+        private void SetCollapsed(bool value)
+        {
+            collapsed = value;
+            body.Visible = !value;
+            Header.Text = (value ? "  ▸ " : "  ▾ ") + title;
         }
 
         /// <summary>Start another row below the current one and make it current.</summary>
@@ -624,5 +683,6 @@ namespace GrblPlotter.AutoWriter.Ui
         {
             return UiTheme.AddNote(body, text);
         }
+        public void AddContent(Control control) { UiTheme.StackBody(body, control); }
     }
 }

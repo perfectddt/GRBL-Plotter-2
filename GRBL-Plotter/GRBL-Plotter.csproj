@@ -128,6 +128,16 @@
       <HintPath>DLLs\NLog.dll</HintPath>
     </Reference>
     <Reference Include="PresentationCore" />
+    <Reference Include="UglyToad.PdfPig"><HintPath>..\packages\PdfPig.0.1.11\lib\net462\UglyToad.PdfPig.dll</HintPath></Reference>
+    <Reference Include="UglyToad.PdfPig.Core"><HintPath>..\packages\PdfPig.0.1.11\lib\net462\UglyToad.PdfPig.Core.dll</HintPath></Reference>
+    <Reference Include="UglyToad.PdfPig.DocumentLayoutAnalysis"><HintPath>..\packages\PdfPig.0.1.11\lib\net462\UglyToad.PdfPig.DocumentLayoutAnalysis.dll</HintPath></Reference>
+    <Reference Include="UglyToad.PdfPig.Fonts"><HintPath>..\packages\PdfPig.0.1.11\lib\net462\UglyToad.PdfPig.Fonts.dll</HintPath></Reference>
+    <Reference Include="UglyToad.PdfPig.Tokenization"><HintPath>..\packages\PdfPig.0.1.11\lib\net462\UglyToad.PdfPig.Tokenization.dll</HintPath></Reference>
+    <Reference Include="UglyToad.PdfPig.Tokens"><HintPath>..\packages\PdfPig.0.1.11\lib\net462\UglyToad.PdfPig.Tokens.dll</HintPath></Reference>
+    <Reference Include="Microsoft.Bcl.HashCode"><HintPath>..\packages\Microsoft.Bcl.HashCode.6.0.0\lib\net462\Microsoft.Bcl.HashCode.dll</HintPath></Reference>
+    <Reference Include="System.Memory"><HintPath>..\packages\System.Memory.4.6.0\lib\net462\System.Memory.dll</HintPath></Reference>
+    <Reference Include="System.Buffers"><HintPath>..\packages\System.Buffers.4.6.0\lib\net462\System.Buffers.dll</HintPath></Reference>
+    <Reference Include="System.Runtime.CompilerServices.Unsafe"><HintPath>..\packages\System.Runtime.CompilerServices.Unsafe.6.1.0\lib\net462\System.Runtime.CompilerServices.Unsafe.dll</HintPath></Reference>
     <Reference Include="QRCoder">
       <HintPath>DLLs\QRCoder.dll</HintPath>
     </Reference>
@@ -509,8 +519,18 @@
     <Compile Include="AutoWriter\Services\MotionCalibrationService.cs" />
     <Compile Include="AutoWriter\Services\BuiltinGlyphLibrary.cs" />
     <Compile Include="AutoWriter\Services\TextLayoutService.cs" />
+    <Compile Include="AutoWriter\Services\WritingPdfService.cs" />
     <Compile Include="AutoWriter\Services\WritingProjectService.cs" />
     <Compile Include="AutoWriter\Services\MachineSetupStateService.cs" />
+    <Compile Include="AutoWriter\Services\ExternalTextEditor.cs" />
+    <Compile Include="AutoWriter\PaperEditor.cs" />
+    <Compile Include="AutoWriter\PaperEditorScene.cs" />
+    <Compile Include="AutoWriter\PaperObjectRows.cs" />
+    <Compile Include="AutoWriter\PaperTextOperations.cs" />
+    <Compile Include="AutoWriter\PaperScene.cs" />
+    <Compile Include="AutoWriter\DrawingGeometry.cs" />
+    <Compile Include="AutoWriter\DrawingAnchors.cs" />
+    <Compile Include="AutoWriter\Services\PaperLayoutFlow.cs" />
     <Compile Include="AutoWriter\Services\PageTaskService.cs" />
     <Compile Include="AutoWriter\Services\WritingExperience.cs" />
     <Compile Include="AutoWriter\AutoWriterBuild.cs" />

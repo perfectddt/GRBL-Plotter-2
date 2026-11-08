@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 
 # Setup-tab layout test (2026-10-12): constructs the real MachineSetupForm with a throwaway
 # state file, embeds it the way the modern shell does (TopLevel=false + Dock=Fill), shows it, and
@@ -141,8 +141,8 @@ internal static class SetupTabsProbe
             "\u8865\u5145\u7f3a\u5b57\u5b57\u5e93", "\u4e0a\u4e00\u9875", "\u4e0b\u4e00\u9875",
             "\u751f\u6210\u5199\u5b57\u9884\u89c8", "\u751f\u6210\u5e76\u8f7d\u5165\u4e3b\u754c\u9762\u9884\u89c8",
             "\u5237\u65b0\u5e94\u7528\u62a5\u544a", "\u68c0\u67e5\u8fde\u7eed\u6392\u961f",
-            "\u5bfc\u51fa\u5199\u5b57\u7a0b\u5e8f", "\u4fdd\u5b58\u5199\u5b57\u9879\u76ee",
-            "\u6253\u5f00\u5199\u5b57\u9879\u76ee" };
+            "\u5bfc\u51faG\u4ee3\u7801", "\u4fdd\u5b58\u9879\u76ee",
+            "\u6253\u5f00\u9879\u76ee" };
     }
 
     private static string[] RegionExpected()
@@ -155,7 +155,7 @@ internal static class SetupTabsProbe
             "\u4e66\u5199\u987a\u5e8f\u63a8\u540e", "\u64a4\u9500", "\u91cd\u505a",
             "\u533a\u57df\u6a21\u677f", "\u7b14\u8d77\u70b9", "\u8bfb\u53d6\u9ed1\u8272\u8d77\u70b9",
             "\u533a\u57df\u7b14\u8ff9\u9884\u89c8", "\u751f\u6210\u5e76\u8f7d\u5165\u4e3b\u754c\u9762\u9884\u89c8",
-            "\u4fdd\u5b58\u5199\u5b57\u9879\u76ee", "\u6253\u5f00\u5199\u5b57\u9879\u76ee",
+            "\u4fdd\u5b58\u9879\u76ee", "\u6253\u5f00\u9879\u76ee",
             "\u5438\u96441mm", "\u7f51\u683c" };
     }
 
