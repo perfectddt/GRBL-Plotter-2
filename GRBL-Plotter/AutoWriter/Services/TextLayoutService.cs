@@ -167,7 +167,7 @@ namespace GrblPlotter.AutoWriter.Services
                         output.Add(new WritingStroke(points));
                     }
                 }
-                cursorX += glyph.AdvanceMm * glyphScale + letterSpacingMm;
+                cursorX += glyph.AdvanceMm * glyphScale + letterSpacingMm*glyph.SpacingScale;
             }
 
             if (output.Count == 0)
@@ -310,7 +310,7 @@ namespace GrblPlotter.AutoWriter.Services
                 if (glyph == null || !FinitePositive(glyph.AdvanceMm)) throw new InvalidOperationException("字形前进距离无效：" + symbol);
                 if (glyph.Strokes == null) throw new InvalidOperationException("字形笔画无效：" + symbol);
                 double advance = glyph.AdvanceMm * glyphScale;
-                double start = row.Occupied ? row.Width + letterSpacingMm : 0;
+                double start = row.Occupied ? row.Width + letterSpacingMm*glyph.SpacingScale : 0;
                 if (start + advance > width + 1e-9 && row.Occupied && autoWrap)
                 {
                     var indexes = new List<int>();

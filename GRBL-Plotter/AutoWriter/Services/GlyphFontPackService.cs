@@ -1,4 +1,4 @@
-/* 2026-10-06 stage 2 font-pack loader (字库路线 A, doc/阶段2-字库路线.md).
+﻿/* 2026-10-06 stage 2 font-pack loader (字库路线 A, doc/阶段2-字库路线.md).
  *
  * Loads the glyph font pack JSON produced by scripts/generate-stage2-fontpack.py
  * from hanzi-writer-data medians: one polyline per stroke, ordered like a person
@@ -16,6 +16,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
 using System.Text;
@@ -24,6 +25,20 @@ using GrblPlotter.AutoWriter.Models;
 
 namespace GrblPlotter.AutoWriter.Services
 {
+    [DataContract] public sealed class FontMixSource
+    {
+        [DataMember] public string Path;
+        [DataMember] public string Sha256;
+        [DataMember] public double Weight=1;
+        [DataMember(EmitDefaultValue=false)] public bool Fallback;
+        [DataMember(EmitDefaultValue=false)] public FontDeformation Deformation;
+    }
+    [DataContract] internal sealed class LocalFontIndex
+    {
+        [DataMember(Name="name")] public string Name;
+        [DataMember(Name="glyphCount")] public int GlyphCount;
+        [DataMember(Name="length")] public long Length;
+    }
     [DataContract]
     internal sealed class GlyphFontPackFile
     {
@@ -37,6 +52,8 @@ namespace GrblPlotter.AutoWriter.Services
         [DataMember(Name = "advanceCjkMm")] public double AdvanceCjkMm;
         [DataMember(Name = "advanceSpaceMm")] public double AdvanceSpaceMm;
         [DataMember(Name = "glyphs")] public List<GlyphFontPackGlyph> Glyphs;
+        [DataMember(Name = "mixSources", EmitDefaultValue=false)] public List<FontMixSource> MixSources;
+        [DataMember(Name = "deformation", EmitDefaultValue=false)] public FontDeformation Deformation;
     }
 
     [DataContract]
@@ -56,6 +73,9 @@ namespace GrblPlotter.AutoWriter.Services
 
     public sealed class GlyphFontPack
     {
+        private Dictionary<char,List<Tuple<BuiltinGlyph,double>>> mix;
+        private FontDeformation deformation;
+        private Dictionary<BuiltinGlyph,FontDeformation> sourceDeformations;
         private readonly Dictionary<char, BuiltinGlyph> glyphs;
 
         public string Name { get; private set; }
@@ -64,6 +84,7 @@ namespace GrblPlotter.AutoWriter.Services
         public double AdvanceCjkMm { get; private set; }
         public double AdvanceSpaceMm { get; private set; }
         public int GlyphCount { get { return glyphs.Count; } }
+        public IEnumerable<char> Characters { get { return glyphs.Keys; } }
 
         private GlyphFontPack(Dictionary<char, BuiltinGlyph> glyphs, string name,
                               string source, string license, double advanceCjkMm, double advanceSpaceMm)
@@ -87,7 +108,12 @@ namespace GrblPlotter.AutoWriter.Services
         private static string CacheKey(string path)
         {
             var info = new FileInfo(path);
-            return path + "|" + info.Length + "|" + info.LastWriteTimeUtc.Ticks;
+            string key=path + "|" + info.Length + "|" + info.LastWriteTimeUtc.Ticks;
+            if(path.EndsWith(".mix.fontpack.json",StringComparison.OrdinalIgnoreCase))using(var stream=File.OpenRead(path)){
+                var data=(GlyphFontPackFile)new DataContractJsonSerializer(typeof(GlyphFontPackFile)).ReadObject(stream);
+                if(data.MixSources!=null)foreach(var source in data.MixSources){string resolved=System.IO.Path.IsPathRooted(source.Path)?source.Path:System.IO.Path.Combine(System.IO.Path.GetDirectoryName(path),source.Path);var file=new FileInfo(resolved);key+="|"+file.Length+":"+file.LastWriteTimeUtc.Ticks;}
+            }
+            return key;
         }
 
         public static GlyphFontPack LoadFromFile(string path)
@@ -132,6 +158,7 @@ namespace GrblPlotter.AutoWriter.Services
             if (file.SchemaVersion != 1)
                 throw new InvalidOperationException(
                     "字库包 schema 版本不支持：" + file.SchemaVersion + "（期望 1，文件：" + path + "）。");
+            if(file.MixSources!=null)return LoadMix(file,path);
             if (file.Glyphs == null || file.Glyphs.Count == 0)
                 throw new InvalidOperationException("字库包没有任何字形：" + path);
             if (file.EmSizeMm != BuiltinGlyphLibrary.EmSizeMm)
@@ -202,6 +229,8 @@ namespace GrblPlotter.AutoWriter.Services
         /// </summary>
         public static GlyphFontPackInfo Peek(string path)
         {
+            if(path.EndsWith(".mix.fontpack.json",StringComparison.OrdinalIgnoreCase)){var mixed=LoadFromFile(path);return new GlyphFontPackInfo(mixed.Name,mixed.GlyphCount,path);}
+            if(File.Exists(path+".info.json"))try{using(var stream=File.OpenRead(path+".info.json")){var info=(LocalFontIndex)new DataContractJsonSerializer(typeof(LocalFontIndex)).ReadObject(stream);if(info.Length==new FileInfo(path).Length&&!string.IsNullOrEmpty(info.Name)&&info.GlyphCount>0)return new GlyphFontPackInfo(info.Name,info.GlyphCount,path);}}catch(Exception){}
             if (string.IsNullOrEmpty(path))
                 throw new ArgumentException("字库包路径为空。", "path");
             if (!File.Exists(path))
@@ -340,7 +369,31 @@ namespace GrblPlotter.AutoWriter.Services
 
         /// <summary>Resolver delegate for TextLayoutService.Layout.</summary>
         public Func<char, BuiltinGlyph> ToResolver()
-        { return ResolveWithFallback; }
+        {
+            var random=new Random(20261108);
+            var deformRandom=new Random(deformation==null?20261108:deformation.Seed);
+            var sourceRandoms=new Dictionary<FontDeformation,Random>();
+            Func<char,BuiltinGlyph> resolve=symbol=>{List<Tuple<BuiltinGlyph,double>> choices;if(mix==null||!mix.TryGetValue(symbol,out choices))return ResolveWithFallback(symbol);double total=0;foreach(var c in choices)total+=c.Item2;double pick=random.NextDouble()*total;foreach(var c in choices){pick-=c.Item2;if(pick<0)return c.Item1;}return choices[choices.Count-1].Item1;};
+            return symbol=>{var glyph=resolve(symbol);FontDeformation settings;if(sourceDeformations!=null&&sourceDeformations.TryGetValue(glyph,out settings)){Random rng;if(!sourceRandoms.TryGetValue(settings,out rng))sourceRandoms[settings]=rng=new Random(settings.Seed);glyph=settings.Apply(glyph,rng);}return deformation==null?glyph:deformation.Apply(glyph,deformRandom);};
+        }
+        private static GlyphFontPack LoadMix(GlyphFontPackFile file,string path)
+        {
+            var glyphs=new Dictionary<char,BuiltinGlyph>();var variants=new Dictionary<char,List<Tuple<BuiltinGlyph,double>>>();var sourceSettings=new Dictionary<BuiltinGlyph,FontDeformation>();
+            if(file.MixSources.Count==0||!file.MixSources.Exists(s=>s!=null&&!s.Fallback))throw new InvalidOperationException("请至少选择一个权重主字库。");
+            foreach(var source in file.MixSources.OrderBy(s=>s!=null&&s.Fallback?1:0))
+            {
+                if(source==null||source.Weight<=0||double.IsNaN(source.Weight)||double.IsInfinity(source.Weight)||source.Weight>1000000)throw new InvalidOperationException("字体权重必须为正数。");
+                if(source.Path.EndsWith(".mix.fontpack.json",StringComparison.OrdinalIgnoreCase))throw new InvalidOperationException("不支持嵌套混写方案。");
+                string resolved=System.IO.Path.IsPathRooted(source.Path)?source.Path:System.IO.Path.Combine(System.IO.Path.GetDirectoryName(path),source.Path);
+                string hash;using(var stream=File.OpenRead(resolved))using(var sha=System.Security.Cryptography.SHA256.Create())hash=BitConverter.ToString(sha.ComputeHash(stream)).Replace("-","");
+                if(hash!=source.Sha256)throw new InvalidOperationException("混写字库已改变："+resolved);
+                var pack=LoadFromFile(resolved);
+                source.Deformation?.Validate();var settings=source.Deformation?.Clone();if(settings!=null)foreach(var glyph in pack.glyphs.Values)sourceSettings[glyph]=settings;
+                foreach(var item in pack.glyphs){if(source.Fallback){if(!glyphs.ContainsKey(item.Key))glyphs[item.Key]=item.Value;continue;}glyphs[item.Key]=item.Value;List<Tuple<BuiltinGlyph,double>> list;if(!variants.TryGetValue(item.Key,out list))variants[item.Key]=list=new List<Tuple<BuiltinGlyph,double>>();list.Add(Tuple.Create(item.Value,source.Weight));}
+            }
+            file.Deformation?.Validate();
+            return new GlyphFontPack(glyphs,file.Name,file.Source,file.License,12,6){mix=variants,deformation=file.Deformation?.Clone(),sourceDeformations=sourceSettings};
+        }
 
         /// <summary>
         /// Returns a new pack where the overlay wins per character. The original files are not rewritten,
@@ -351,7 +404,13 @@ namespace GrblPlotter.AutoWriter.Services
             if (overlay == null || overlay.glyphs.Count == 0) return this;
             var copy = new Dictionary<char, BuiltinGlyph>(glyphs);
             foreach (KeyValuePair<char, BuiltinGlyph> pair in overlay.glyphs) copy[pair.Key] = pair.Value;
-            return new GlyphFontPack(copy, Name + " + " + overlay.Name, Source, License, AdvanceCjkMm, AdvanceSpaceMm);
+            var result=new GlyphFontPack(copy, Name + " + " + overlay.Name, Source, License, AdvanceCjkMm, AdvanceSpaceMm);
+            result.deformation=deformation?.Clone();result.sourceDeformations=sourceDeformations;if(mix!=null){result.mix=new Dictionary<char,List<Tuple<BuiltinGlyph,double>>>(mix);foreach(var key in overlay.glyphs.Keys)result.mix.Remove(key);}return result;
+        }
+        public GlyphFontPack WithFallback(GlyphFontPack fallback)
+        {
+            if(fallback==null)return this;var copy=new Dictionary<char,BuiltinGlyph>(glyphs);foreach(var item in fallback.glyphs)if(!copy.ContainsKey(item.Key))copy[item.Key]=item.Value;
+            return new GlyphFontPack(copy,Name+" + 缺字补充 "+fallback.Name,Source,License,AdvanceCjkMm,AdvanceSpaceMm){mix=mix,deformation=deformation?.Clone(),sourceDeformations=sourceDeformations};
         }
     }
 
@@ -384,6 +443,8 @@ namespace GrblPlotter.AutoWriter.Services
             string exeDir = AppDomain.CurrentDomain.BaseDirectory;
             var candidates = new[]
             {
+                Path.GetFullPath(Path.Combine(exeDir,"..","..","..","artifacts","local-fonts")),
+                Path.GetFullPath(Path.Combine(exeDir,"..","..","local-fonts")),
                 Path.Combine(exeDir, "Fonts"),                                  // deployed layout
                 Path.Combine(exeDir, "AutoWriter", "Fonts"),                    // csproj path-preserving copy
                 Path.GetFullPath(Path.Combine(exeDir, "..", "..", "AutoWriter", "Fonts")),      // dev tree

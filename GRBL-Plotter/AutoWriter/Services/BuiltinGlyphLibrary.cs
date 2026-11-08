@@ -20,6 +20,7 @@ namespace GrblPlotter.AutoWriter.Services
         public char Symbol { get; set; }
         /// <summary>Horizontal cursor advance in mm, including the glyph's own right margin.</summary>
         public double AdvanceMm { get; set; }
+        public double SpacingScale { get; set; } = 1;
         /// <summary>Pen-down strokes in em-box paper coordinates (origin at the em's lower left, Y up).</summary>
         public IList<WritingStroke> Strokes { get; set; }
     }

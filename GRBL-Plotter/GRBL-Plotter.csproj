@@ -527,6 +527,9 @@
     <Compile Include="AutoWriter\PaperEditorScene.cs" />
     <Compile Include="AutoWriter\PaperObjectRows.cs" />
     <Compile Include="AutoWriter\PaperTextOperations.cs" />
+    <Compile Include="AutoWriter\FontPicker.cs" />
+    <Compile Include="AutoWriter\FontDeformationForm.cs" />
+    <Compile Include="AutoWriter\Services\FontDeformation.cs" />
     <Compile Include="AutoWriter\PaperScene.cs" />
     <Compile Include="AutoWriter\DrawingGeometry.cs" />
     <Compile Include="AutoWriter\DrawingAnchors.cs" />

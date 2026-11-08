@@ -320,7 +320,12 @@ namespace GrblPlotter.AutoWriter
             PopulateFontSelector();
             fontSelector.SelectedIndexChanged += (sender, args) => { selectedFontPack = null; InvalidateWriting(); };
             fontSelector.Dock = DockStyle.Fill;
-            groupContent.Row.Controls.Add(fontSelector);
+            var chooseFont=UiTheme.MakeButton("选择字体…",()=>{
+                string current=fontSelector.SelectedIndex>0?fontPackPaths[fontSelector.SelectedIndex-1]:"";
+                using(var picker=new FontPicker(current,supplementPath))if(picker.ShowDialog(DialogOwner)==DialogResult.OK){int index=fontPackPaths.FindIndex(path=>string.Equals(path,picker.SelectedPath,StringComparison.OrdinalIgnoreCase));if(index<0){fontPackPaths.Add(picker.SelectedPath);fontSelector.Items.Add(GlyphFontPack.Peek(picker.SelectedPath).Name);index=fontPackPaths.Count-1;}fontSelector.SelectedIndex=index+1;supplementPath="";supplementPack=null;}
+            },UiButtonKind.Normal);
+            chooseFont.Dock=DockStyle.Fill;groupContent.Row.Controls.Add(chooseFont);
+            Action updateFontCaption=()=>{chooseFont.Text=fontSelector.SelectedItem==null?"选择字体…":"字体："+fontSelector.SelectedItem;};fontSelector.SelectedIndexChanged+=(s,e)=>updateFontCaption();updateFontCaption();
             groupContent.NewRow();
             fontSizeInput = groupContent.AddField("字号mm", "10", 42);
             letterSpacingInput = groupContent.AddField("字距mm", "2", 42);
@@ -849,7 +854,7 @@ namespace GrblPlotter.AutoWriter
         {
             GlyphFontPack pack = SelectedPackOrNull();
             EnsureSupplementLoaded();
-            if (supplementPack != null) pack = pack == null ? supplementPack : pack.OverlayWith(supplementPack);
+            if (supplementPack != null) pack = pack == null ? supplementPack : pack.WithFallback(supplementPack);
             return pack == null ? (Func<char, BuiltinGlyph>)BuiltinGlyphLibrary.Resolve : pack.ToResolver();
         }
         private Func<char, BuiltinGlyph> ResolverFor(WritingRegion region)
@@ -857,7 +862,7 @@ namespace GrblPlotter.AutoWriter
             if (region == null || string.IsNullOrEmpty(region.FontPath)) return ChainResolver();
             GlyphFontPack pack = LoadRegionFont(region.FontPath);
             EnsureSupplementLoaded();
-            if (supplementPack != null) pack = pack.OverlayWith(supplementPack);
+            if (supplementPack != null) pack = pack.WithFallback(supplementPack);
             return pack.ToResolver();
         }
         private void EnsureSupplementLoaded()
@@ -1314,7 +1319,7 @@ namespace GrblPlotter.AutoWriter
                         supplementPack = GlyphFontPack.LoadFromFile(dialog.FileName);
                         supplementPath = Path.GetFullPath(dialog.FileName);
                         InvalidateWriting();
-                        status.Text = "已叠加补充字库「" + supplementPack.Name + "」。原来的字库文件没有被改写。";
+                        status.Text = "已设置缺字补充字库「" + supplementPack.Name + "」。原来的字库文件没有被改写。";
                     }
             });
         }

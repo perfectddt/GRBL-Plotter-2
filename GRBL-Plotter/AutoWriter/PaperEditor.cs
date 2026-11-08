@@ -1158,7 +1158,10 @@ namespace GrblPlotter.AutoWriter
                 }
                 ,0,0);
                 header.Controls.Add(font,1,0);
-                header.SetColumnSpan(font,3);
+                header.SetColumnSpan(font,2);
+                var pickFont=Ui.UiTheme.MakeButton("选择…",()=>{
+                    using(var picker=new FontPicker(paths[font.SelectedIndex]))if(picker.ShowDialog(dialog)==DialogResult.OK){int index=paths.FindIndex(p=>string.Equals(p,picker.SelectedPath,StringComparison.OrdinalIgnoreCase));if(index<0){paths.Add(picker.SelectedPath);font.Items.Add(GlyphFontPack.Peek(picker.SelectedPath).Name);index=paths.Count-1;}font.SelectedIndex=index;}
+                },Ui.UiButtonKind.Normal);pickFont.Dock=DockStyle.Fill;header.Controls.Add(pickFont,3,0);
                 header.Controls.Add(new Label
                 {
                     Text="字号 mm",Dock=DockStyle.Fill,TextAlign=ContentAlignment.MiddleLeft
